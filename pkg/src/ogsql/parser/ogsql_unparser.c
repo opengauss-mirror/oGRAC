@@ -1437,22 +1437,18 @@ static status_t ogsql_unparse_hash_exprs(
 
 status_t ogsql_unparse_connect_mtrl_join_node(sql_query_t *qry, plan_node_t *plan, var_text_t *result)
 {
+    cond_tree_t *tree = plan->cb_mtrl.connect_by_cond;
+    if (tree != NULL && tree->root->type != COND_NODE_TRUE) {
+        // Materialized keys are cloned from this condition without removing the original predicates.
+        return ogsql_unparse_cond_node(qry, tree->root, OG_FALSE, result);
+    }
+
     galist_t *p_expr_lst = plan->cb_mtrl.prior_exprs;
     galist_t *k_expr_lst = plan->cb_mtrl.key_exprs;
-
     if (p_expr_lst != NULL) {
-        OG_RETURN_IFERR(ogsql_unparse_hash_exprs(qry, p_expr_lst, k_expr_lst, result));
+        return ogsql_unparse_hash_exprs(qry, p_expr_lst, k_expr_lst, result);
     }
-
-    cond_tree_t *tree = plan->cb_mtrl.connect_by_cond;
-    if (tree == NULL || tree->root->type == COND_NODE_TRUE) {
-        return OG_SUCCESS;
-    }
-
-    if (p_expr_lst != NULL && p_expr_lst->count > 0) {
-        OG_RETURN_IFERR(cm_concat_var_string(result, " AND "));
-    }
-    return ogsql_unparse_cond_node(qry, tree->root, OG_FALSE, result);
+    return OG_SUCCESS;
 }
 
 status_t ogsql_unparse_hash_mtrl_node(sql_query_t *qry, plan_node_t *plan, var_text_t *result)

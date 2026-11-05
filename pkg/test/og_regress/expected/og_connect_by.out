@@ -56,7 +56,7 @@ EXPLAIN PLAN OUTPUT
 ------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    1 - access: PRIOR T_CB_1.EMPNO = T_CB_2.MGR AND PRIOR T_CB_1.EMPNO = T_CB_2.MGR AND T_CB_1.ENAME != T_CB_2.ENAME
+    1 - access: PRIOR T_CB_1.EMPNO = T_CB_2.MGR AND T_CB_1.ENAME != T_CB_2.ENAME
     1 - filter: T_CB_1.ENAME != T_CB_2.ENAME                    
     4 - filter: T_CB_1.ENAME != T_CB_2.ENAME                    
 
@@ -346,5 +346,107 @@ SQL> drop table t_cb_real_cycle;
 Succeed.
 
 SQL> 
+SQL> DROP TABLE IF EXISTS cb_min_input PURGE;
 
+Succeed.
 
+SQL> CREATE TABLE cb_min_input(k INT);
+
+Succeed.
+
+SQL> BEGIN
+  2     FOR i IN 1..5000 LOOP
+  3         INSERT INTO cb_min_input VALUES(i);
+  4     END LOOP;
+  5 END;
+  6 /
+
+PL/SQL procedure successfully completed.
+
+SQL> COMMIT;
+
+Succeed.
+
+SQL>
+SQL> EXPLAIN
+  2 SELECT SUM(n)
+  3 FROM (SELECT k,COUNT(*) n FROM cb_min_input GROUP BY k) s
+  4 CONNECT BY k=0;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------
+| Id | Operation                       | Owner | Name         | Rows | Cost | StartCost | Bytes | Remark            |
+---------------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                |       |              | 1    | 689  | 322       |       |                   |
+| 1  |   AGGR                          |       |              | 1    | 689  | 322       |       |                   |
+| 2  |     CONNECT BY MATERIALIZE      |       |              | 744  | 364  | 319       |       | CHILD MATCH CACHE |
+| 3  |         SUBSELECT               | SYS   | S            | 744  | 263  | 11        |       |                   |
+| 4  |           HASH GROUP BY         |       |              | 744  | 263  | 11        |       |                   |
+| 5  |               TABLE ACCESS FULL | SYS   | CB_MIN_INPUT | 7440 | 107  | 0         |       |                   |
+---------------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    2 - access: K = 0
+
+13 rows fetched.
+
+SQL>
+SQL> SELECT SUM(n)
+  2 FROM (SELECT k,COUNT(*) n FROM cb_min_input GROUP BY k) s
+  3 CONNECT BY k=0;
+
+SUM(N)
+----------------------------------------
+5000
+
+1 rows fetched.
+
+SQL>
+SQL> SELECT k FROM (SELECT k FROM cb_min_input CONNECT BY LEVEL <= 2) q LIMIT 1;
+
+K           
+------------
+1           
+
+1 rows fetched.
+
+SQL>
+SQL> DROP TABLE cb_min_input PURGE;
+
+Succeed.
+
+SQL>
+SQL> CREATE SEQUENCE cb_rank_order_seq START WITH 1;
+
+Succeed.
+
+SQL> CREATE OR REPLACE FUNCTION cb_rank_order_value RETURN INT IS
+  2     n INT;
+  3 BEGIN
+  4     SELECT cb_rank_order_seq.NEXTVAL INTO n FROM SYS_DUMMY;
+  5     RETURN n;
+  6 END;
+  7 /
+
+Succeed.
+
+SQL> SELECT SUM(n)
+  2 FROM (SELECT RANK(2) WITHIN GROUP (ORDER BY cb_rank_order_value()) n FROM SYS_DUMMY) s
+  3 CONNECT BY LEVEL <= 2;
+
+SUM(N)
+--------------------
+3
+
+1 rows fetched.
+
+SQL> DROP FUNCTION cb_rank_order_value;
+
+Succeed.
+
+SQL> DROP SEQUENCE cb_rank_order_seq;
+
+Succeed.
+
+SQL>

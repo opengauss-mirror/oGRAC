@@ -281,7 +281,31 @@ static status_t sql_collect_connect_mtrl_keys(sql_stmt_t *stmt, cond_node_t *con
 
 static status_t sql_check_connect_cache_expr(visit_assist_t *visit_ass, expr_node_t **node)
 {
+    expr_node_t *origin = sql_get_origin_ref(*node);
+    if (origin != *node) {
+        return visit_expr_node(visit_ass, &origin, sql_check_connect_cache_expr);
+    }
     switch ((*node)->type) {
+        case EXPR_NODE_FUNC: {
+            if ((*node)->value.v_func.pack_id != OG_INVALID_ID32) {
+                visit_ass->result0 = OG_FALSE;
+                return OG_SUCCESS;
+            }
+            sql_func_t *func = sql_get_func(&(*node)->value.v_func);
+            if ((func->aggr_type == AGGR_TYPE_NONE && func->options != FO_NORMAL) ||
+                func->builtin_func_id == ID_FUNC_ITEM_RAND) {
+                visit_ass->result0 = OG_FALSE;
+                return OG_SUCCESS;
+            }
+            if ((func->aggr_type == AGGR_TYPE_RANK || func->aggr_type == AGGR_TYPE_DENSE_RANK ||
+                func->aggr_type == AGGR_TYPE_CUME_DIST) && (*node)->sort_items != NULL) {
+                for (uint32 i = 0; i < (*node)->sort_items->count; i++) {
+                    sort_item_t *item = (sort_item_t *)cm_galist_get((*node)->sort_items, i);
+                    OG_RETURN_IFERR(visit_expr_tree(visit_ass, item->expr, sql_check_connect_cache_expr));
+                }
+            }
+            return visit_func_node(visit_ass, *node, sql_check_connect_cache_expr);
+        }
         case EXPR_NODE_PRIOR:
             // Grouping evaluates PRIOR operands for every input row, including unreachable rows.
             // Restrict them to columns so this cannot introduce expression errors during materialization.
@@ -297,6 +321,8 @@ static status_t sql_check_connect_cache_expr(visit_assist_t *visit_ass, expr_nod
             return OG_SUCCESS;
         case EXPR_NODE_CONST:
         case EXPR_NODE_PARAM:
+        case EXPR_NODE_AGGR:
+        case EXPR_NODE_STAR:
         case EXPR_NODE_NEGATIVE:
             return OG_SUCCESS;
         default:
@@ -322,25 +348,170 @@ static status_t sql_connect_cond_cacheable(sql_stmt_t *stmt, cond_tree_t *cond, 
     return OG_SUCCESS;
 }
 
+static status_t sql_check_connect_input_node(visit_assist_t *va, select_node_t *node);
+
+static status_t sql_check_connect_input_tables(visit_assist_t *va, sql_query_t *query)
+{
+    cond_tree_t *conds[] = { query->cond, query->filter_cond };
+    for (uint32 i = 0; i < ELEMENT_COUNT(conds); i++) {
+        if (conds[i] != NULL) {
+            OG_RETURN_IFERR(visit_cond_node(va, conds[i]->root, sql_check_connect_cache_expr));
+        }
+    }
+    if (query->join_assist.join_node != NULL) {
+        OG_RETURN_IFERR(visit_join_node_cond(va, query->join_assist.join_node, sql_check_connect_cache_expr));
+    }
+    for (uint32 i = 0; i < query->tables.count && va->result0; i++) {
+        sql_table_t *table = (sql_table_t *)sql_array_get(&query->tables, i);
+        if (table->remote_type != REMOTE_TYPE_LOCAL || table->version.type != CURR_VERSION) {
+            va->result0 = OG_FALSE;
+        } else if (OG_IS_SUBSELECT_TABLE(table->type)) {
+            sql_select_t *select_ctx = table->select_ctx;
+            if (select_ctx->has_ancestor != 0 || select_ctx->parent_refs->count != 0 || select_ctx->for_update) {
+                va->result0 = OG_FALSE;
+                break;
+            }
+            for (uint32 j = 0; j < select_ctx->sort_items->count; j++) {
+                sort_item_t *item = (sort_item_t *)cm_galist_get(select_ctx->sort_items, j);
+                OG_RETURN_IFERR(visit_expr_tree(va, item->expr, sql_check_connect_cache_expr));
+            }
+            OG_RETURN_IFERR(visit_expr_tree(va, select_ctx->limit.count, sql_check_connect_cache_expr));
+            OG_RETURN_IFERR(visit_expr_tree(va, select_ctx->limit.offset, sql_check_connect_cache_expr));
+            OG_RETURN_IFERR(sql_check_connect_input_node(va, select_ctx->root));
+        } else if (table->type != NORMAL_TABLE) {
+            va->result0 = OG_FALSE;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+static status_t sql_check_connect_input_columns(visit_assist_t *va, galist_t *columns)
+{
+    for (uint32 i = 0; i < columns->count; i++) {
+        rs_column_t *col = (rs_column_t *)cm_galist_get(columns, i);
+        if (OG_IS_LOB_TYPE(col->datatype) || col->typmod.is_array) {
+            va->result0 = OG_FALSE;
+        } else if (col->type == RS_COL_CALC) {
+            // Materialize values already produced by the input, without forcing deferred expressions.
+            expr_node_type_t type = col->expr->root->type;
+            if (type != EXPR_NODE_COLUMN && type != EXPR_NODE_GROUP && type != EXPR_NODE_AGGR &&
+                type != EXPR_NODE_CONST && type != EXPR_NODE_PARAM) {
+                va->result0 = OG_FALSE;
+            }
+            OG_RETURN_IFERR(visit_expr_tree(va, col->expr, sql_check_connect_cache_expr));
+        } else if (col->v_col.ancestor != 0) {
+            va->result0 = OG_FALSE;
+        }
+    }
+    return OG_SUCCESS;
+}
+
+static status_t sql_check_connect_input_node(visit_assist_t *va, select_node_t *node)
+{
+    OG_RETURN_IFERR(sql_stack_safe(va->stmt));
+    if (!va->result0) {
+        return OG_SUCCESS;
+    }
+    if (node->type != SELECT_NODE_QUERY) {
+        OG_RETURN_IFERR(sql_check_connect_input_node(va, node->left));
+        return sql_check_connect_input_node(va, node->right);
+    }
+    sql_query_t *query = node->query;
+    if (query->for_update || query->ssa.count != 0 || query->connect_by_cond != NULL || query->pivot_items != NULL) {
+        va->result0 = OG_FALSE;
+        return OG_SUCCESS;
+    }
+    OG_RETURN_IFERR(sql_check_connect_input_tables(va, query));
+    OG_RETURN_IFERR(sql_check_connect_input_columns(va, query->rs_columns));
+    OG_RETURN_IFERR(sql_check_connect_input_columns(va, query->distinct_columns));
+    for (uint32 i = 0; i < query->aggrs->count; i++) {
+        expr_node_t *aggr = (expr_node_t *)cm_galist_get(query->aggrs, i);
+        OG_RETURN_IFERR(visit_expr_node(va, &aggr, sql_check_connect_cache_expr));
+    }
+    for (uint32 i = 0; i < query->group_sets->count; i++) {
+        group_set_t *group = (group_set_t *)cm_galist_get(query->group_sets, i);
+        for (uint32 j = 0; j < group->items->count; j++) {
+            expr_tree_t *expr = (expr_tree_t *)cm_galist_get(group->items, j);
+            OG_RETURN_IFERR(visit_expr_tree(va, expr, sql_check_connect_cache_expr));
+        }
+    }
+    if (query->having_cond != NULL) {
+        OG_RETURN_IFERR(visit_cond_node(va, query->having_cond->root, sql_check_connect_cache_expr));
+    }
+    for (uint32 i = 0; i < query->sort_items->count; i++) {
+        sort_item_t *item = (sort_item_t *)cm_galist_get(query->sort_items, i);
+        OG_RETURN_IFERR(visit_expr_tree(va, item->expr, sql_check_connect_cache_expr));
+    }
+    OG_RETURN_IFERR(visit_expr_tree(va, query->limit.count, sql_check_connect_cache_expr));
+    return visit_expr_tree(va, query->limit.offset, sql_check_connect_cache_expr);
+}
+
+static bool32 sql_connect_has_outer_limit(sql_query_t *query)
+{
+    sql_select_t *child_select = NULL;
+    uint32 blocking = EX_QUERY_AGGR | EX_QUERY_SORT | EX_QUERY_DISTINCT | EX_QUERY_WINSORT | EX_QUERY_SIBL_SORT |
+        EX_QUERY_HAVING | EX_QUERY_CUBE | EX_QUERY_PIVOT | EX_QUERY_UNPIVOT | EX_QUERY_FOR_UPDATE;
+    while (query != NULL) {
+        sql_select_t *select_ctx = query->owner;
+        if (select_ctx == NULL || select_ctx->root->type != SELECT_NODE_QUERY || select_ctx->root->query != query ||
+            query->tables.count != 1 || (get_query_plan_flag(query) & blocking) != 0 ||
+            select_ctx->sort_items->count != 0 || query->calc_found_rows || select_ctx->calc_found_rows ||
+            select_ctx->for_update || query->filter_cond != NULL || query->ssa.count != 0) {
+            return OG_FALSE;
+        }
+        if (child_select != NULL) {
+            sql_table_t *table = (sql_table_t *)sql_array_get(&query->tables, 0);
+            if (table->type != SUBSELECT_AS_TABLE || table->select_ctx != child_select || query->connect_by_cond != NULL) {
+                return OG_FALSE;
+            }
+            // Only a direct projection can carry an ancestor's stop condition through this query.
+            cond_tree_t *cond = query->cond;
+            if (cond != NULL && cond->root->type != COND_NODE_TRUE) {
+                return OG_FALSE;
+            }
+            if (query->limit.count != NULL || select_ctx->limit.count != NULL) {
+                return OG_TRUE;
+            }
+        }
+        child_select = select_ctx;
+        query = select_ctx->parent;
+    }
+    return OG_FALSE;
+}
+
 static status_t sql_try_transform_connect_mtrl(sql_stmt_t *statement, sql_query_t *qry)
 {
     cb_mtrl_info_t *info = NULL;
     bool32 matched = OG_FALSE;
 
-    if (!g_instance->sql.enable_cb_mtrl || !is_query_tables_all_normal(qry)) {
+    if (!g_instance->sql.enable_cb_mtrl) {
+        return OG_SUCCESS;
+    }
+    visit_assist_t va;
+    sql_init_visit_assist(&va, statement, qry);
+    va.excl_flags = VA_EXCL_PRIOR | VA_EXCL_FUNC | VA_EXCL_PROC | VA_EXCL_ARRAY | VA_EXCL_WIN_SORT;
+    va.result0 = OG_TRUE;
+    OG_RETURN_IFERR(sql_check_connect_input_tables(&va, qry));
+    if (!va.result0) {
         return OG_SUCCESS;
     }
 
     OG_RETURN_IFERR(sql_alloc_connect_mtrl_info(statement, &info));
     OG_RETURN_IFERR(sql_collect_connect_mtrl_keys(statement, qry->connect_by_cond->root, info, &matched));
-    if (!matched && qry->connect_by_prior && !qry->for_update) {
-        // Match lists can be reused only when they depend on the two rows, not the traversal path or a function call.
+    uint32 blocking = get_query_plan_flag(qry) &
+        (EX_QUERY_AGGR | EX_QUERY_SORT | EX_QUERY_DISTINCT | EX_QUERY_WINSORT | EX_QUERY_SIBL_SORT);
+    bool32 limited_stream = (LIMIT_CLAUSE_OCCUR(&qry->limit) || LIMIT_CLAUSE_OCCUR(&qry->owner->limit)) &&
+        blocking == 0 && qry->owner->sort_items->count == 0 && !qry->calc_found_rows;
+    // Preserve early output when a bounded stream does not need a blocking operator.
+    if (!matched && (qry->for_update || limited_stream || sql_connect_has_outer_limit(qry))) {
+        return OG_SUCCESS;
+    }
+    if (!matched) {
+        // Matching may depend on the two rows, but never on the traversal path or volatile state.
         OG_RETURN_IFERR(sql_connect_cond_cacheable(statement, qry->connect_by_cond, &info->cache_children));
-        matched = info->cache_children;
     }
-    if (matched) {
-        qry->cb_mtrl_info = info;
-    }
+    // Stable input can still be shared when path-dependent matching must run for each parent.
+    qry->cb_mtrl_info = info;
     return OG_SUCCESS;
 }
 

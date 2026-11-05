@@ -290,21 +290,19 @@ SQL> explain select * from (select a, b from sse_t1 connect by a < b);
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
-------------------------------------------------------------------------------------------------
-| Id | Operation                   | Owner | Name   | Rows | Cost | StartCost | Bytes | Remark |
-------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |        | 3    | 4    | 0         |       |        |
-| 1  |     SUBSELECT               | SYS   |        | 3    | 4    | 0         |       |        |
-| 2  |       START WITH            |       |        | 3    | 1    | 0         |       |        |
-| 3  |           TABLE ACCESS FULL | SYS   | SSE_T1 | 3    | 1    | 0         |       |        |
-| 4  |       CONNECT BY            |       |        | 3    | 4    | 0         |       |        |
-| 5  |           TABLE ACCESS FULL | SYS   | SSE_T1 | 3    | 1    | 0         |       |        |
-------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------
+| Id | Operation                    | Owner | Name   | Rows | Cost | StartCost | Bytes | Remark            |
+------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT             |       |        | 3    | 25   | 25        |       |                   |
+| 1  |     SUBSELECT                | SYS   |        | 3    | 25   | 25        |       |                   |
+| 2  |       CONNECT BY MATERIALIZE |       |        | 3    | 25   | 25        |       | CHILD MATCH CACHE |
+| 3  |           TABLE ACCESS FULL  | SYS   | SSE_T1 | 3    | 1    | 0         |       |                   |
+------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    4 - filter: A < B                                           
+    2 - access: A < B
 
-13 rows fetched.
+11 rows fetched.
 
 SQL> 
 SQL> explain select * from (select a, max(b) over() from sse_t1 );
@@ -394,24 +392,20 @@ SQL> explain select * from (select a, b from sse_t1 where b < 20) sub_qry connec
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
--------------------------------------------------------------------------------------------------
-| Id | Operation                   | Owner | Name    | Rows | Cost | StartCost | Bytes | Remark |
--------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |         | 3    | 4    | 0         |       |        |
-| 1  |   START WITH                |       |         | 3    | 1    | 0         |       |        |
-| 2  |       SUBSELECT             | SYS   | SUB_QRY | 3    | 1    | 0         |       |        |
-| 3  |           TABLE ACCESS FULL | SYS   | SSE_T1  | 3    | 1    | 0         |       |        |
-| 4  |   CONNECT BY                |       |         | 3    | 4    | 0         |       |        |
-| 5  |       SUBSELECT             | SYS   | SUB_QRY | 3    | 1    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SSE_T1  | 3    | 1    | 0         |       |        |
--------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------
+| Id | Operation                   | Owner | Name    | Rows | Cost | StartCost | Bytes | Remark            |
+------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT            |       |         | 3    | 25   | 25        |       |                   |
+| 1  |   CONNECT BY MATERIALIZE    |       |         | 3    | 25   | 25        |       | CHILD MATCH CACHE |
+| 2  |       SUBSELECT             | SYS   | SUB_QRY | 3    | 1    | 0         |       |                   |
+| 3  |           TABLE ACCESS FULL | SYS   | SSE_T1  | 3    | 1    | 0         |       |                   |
+------------------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
+    1 - access: SUB_QRY.A < SUB_QRY.B
     3 - filter: B < 20                                          
-    4 - filter: SUB_QRY.A < SUB_QRY.B                           
-    6 - filter: B < 20                                          
 
-16 rows fetched.
+12 rows fetched.
 
 SQL> 
 SQL> explain select * from sse_t2 left join (select a, b from sse_t1 where b < 20) sub_qry on 1=1;

@@ -69,3 +69,40 @@ select id, level as lv from t_cb_real_cycle t_off connect by nocycle prior val<=
 select id, level as lv from t_cb_real_cycle t_eq_off connect by nocycle prior val=val order by id,lv;
 alter system set _connect_by_materialize=true scope=memory;
 drop table t_cb_real_cycle;
+
+DROP TABLE IF EXISTS cb_min_input PURGE;
+CREATE TABLE cb_min_input(k INT);
+BEGIN
+    FOR i IN 1..5000 LOOP
+        INSERT INTO cb_min_input VALUES(i);
+    END LOOP;
+END;
+/
+COMMIT;
+
+EXPLAIN
+SELECT SUM(n)
+FROM (SELECT k,COUNT(*) n FROM cb_min_input GROUP BY k) s
+CONNECT BY k=0;
+
+SELECT SUM(n)
+FROM (SELECT k,COUNT(*) n FROM cb_min_input GROUP BY k) s
+CONNECT BY k=0;
+
+SELECT k FROM (SELECT k FROM cb_min_input CONNECT BY LEVEL <= 2) q LIMIT 1;
+
+DROP TABLE cb_min_input PURGE;
+
+CREATE SEQUENCE cb_rank_order_seq START WITH 1;
+CREATE OR REPLACE FUNCTION cb_rank_order_value RETURN INT IS
+    n INT;
+BEGIN
+    SELECT cb_rank_order_seq.NEXTVAL INTO n FROM SYS_DUMMY;
+    RETURN n;
+END;
+/
+SELECT SUM(n)
+FROM (SELECT RANK(2) WITHIN GROUP (ORDER BY cb_rank_order_value()) n FROM SYS_DUMMY) s
+CONNECT BY LEVEL <= 2;
+DROP FUNCTION cb_rank_order_value;
+DROP SEQUENCE cb_rank_order_seq;
