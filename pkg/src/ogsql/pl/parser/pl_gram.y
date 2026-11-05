@@ -4840,6 +4840,24 @@ static status_t compile_refcur_using_clause(core_yyscan_t yyscanner, pl_compiler
     }
 }
 
+static status_t compile_open_for_static_query(pl_compiler_t *compiler, pl_line_open_t *line, plv_decl_t *decl,
+    text_t *src, source_location_t query_loc)
+{
+    sql_stmt_t *stmt = compiler->stmt;
+
+    line->is_dynamic_sql = OG_FALSE;
+    OG_RETURN_IFERR(plc_init_galist(compiler, &line->input));
+    decl->cursor.input = line->input;
+    if (compile_static_sql_context(stmt, src, KEY_WORD_SELECT, query_loc, line->input, NULL,
+        &line->context) != OG_SUCCESS) {
+        decl->cursor.input = NULL;
+        return OG_ERROR;
+    }
+    OG_RETURN_IFERR(sql_append_references(&((pl_entity_t *)compiler->entity)->ref_list, line->context));
+    decl->cursor.input = NULL;
+    return OG_SUCCESS;
+}
+
 static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc,
     source_location_t stmt_loc)
 {
@@ -4866,7 +4884,40 @@ static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *curs
         return OG_ERROR;
     }
     query_loc = PLSQL_YYLLOC(yyscanner)->loc;
-    if (tok == K_SELECT) {
+    if (tok == '(') {
+        YYLTYPE opening_loc = *PLSQL_YYLLOC(yyscanner);
+        int first_token = PLSQL_YYLEX(yyscanner);
+
+        if (first_token == LEX_ERROR_TOKEN) {
+            return OG_ERROR;
+        }
+        /* (SELECT ...) is static SQL. Native peels one bracket pair before compiling. */
+        if (first_token == K_SELECT) {
+            query_loc = PLSQL_YYLLOC(yyscanner)->loc;
+            src = read_sql_construct_from(PLSQL_YYLLOC(yyscanner)->offset, ')', 0, 0, 0, 0, 0, yyscanner,
+                &endtoken);
+            if (src == NULL) {
+                return OG_ERROR;
+            }
+            if (endtoken != ')') {
+                return pl_expected_token_error(yyscanner, loc, "')'", endtoken);
+            }
+            endtoken = PLSQL_YYLEX(yyscanner);
+            if (endtoken == LEX_ERROR_TOKEN) {
+                return OG_ERROR;
+            }
+            if (endtoken != ';') {
+                return pl_expected_token_error(yyscanner, loc, "';'", endtoken);
+            }
+            return compile_open_for_static_query(compiler, line, decl, src, query_loc);
+        }
+
+        /* The opening '(' is already consumed. Keep it in the dynamic expression text. */
+        if (read_sql_construct_core(opening_loc.offset, first_token, K_USING, ';', 0, 0, 0, 0, yyscanner, &src,
+            &endtoken, NULL) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    } else if (tok == K_SELECT) {
         src = read_sql_construct_from(PLSQL_YYLLOC(yyscanner)->offset, ';', 0, 0, 0, 0, 0, yyscanner, &endtoken);
         if (src == NULL) {
             return OG_ERROR;
@@ -4874,28 +4925,18 @@ static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *curs
         if (endtoken != ';') {
             return pl_expected_token_error(yyscanner, loc, "';'", endtoken);
         }
-        line->is_dynamic_sql = OG_FALSE;
-        OG_RETURN_IFERR(plc_init_galist(compiler, &line->input));
-        decl->cursor.input = line->input;
-        if (compile_static_sql_context(stmt, src, KEY_WORD_SELECT, query_loc, line->input, NULL,
-            &line->context) != OG_SUCCESS) {
-            decl->cursor.input = NULL;
-            return OG_ERROR;
-        }
-        OG_RETURN_IFERR(sql_append_references(&((pl_entity_t *)compiler->entity)->ref_list, line->context));
-        decl->cursor.input = NULL;
-        return OG_SUCCESS;
-    }
-
-    if (tok == YYEOF) {
+        return compile_open_for_static_query(compiler, line, decl, src, query_loc);
+    } else if (tok == YYEOF) {
         OG_SRC_THROW_ERROR(loc, ERR_PL_EXPECTED_FAIL_FMT, "cursor query", "EOF");
         return OG_ERROR;
+    } else {
+        src = read_sql_construct_from(PLSQL_YYLLOC(yyscanner)->offset, K_USING, ';', 0, 0, 0, 0, yyscanner,
+            &endtoken);
+        if (src == NULL) {
+            return OG_ERROR;
+        }
     }
 
-    src = read_sql_construct_from(PLSQL_YYLLOC(yyscanner)->offset, K_USING, ';', 0, 0, 0, 0, yyscanner, &endtoken);
-    if (src == NULL) {
-        return OG_ERROR;
-    }
     line->is_dynamic_sql = OG_TRUE;
     OG_RETURN_IFERR(get_valid_expr_tree(stmt, src, &line->dynamic_sql));
     OG_RETURN_IFERR(plc_verify_expr(compiler, line->dynamic_sql));

@@ -2764,6 +2764,45 @@ drop trigger if exists BISON_LOC_P2_TRG_EXPR;
 drop trigger if exists BISON_LOC_P2_TRG_SQL;
 drop procedure if exists BISON_LOC_P2_PROC;
 drop table if exists BISON_LOC_P2_T;
+-- OPEN FOR (SELECT ...) is static SQL. One parenthesis pair is not part of the query.
+set serveroutput on;
+declare
+    c sys_refcursor;
+    n int;
+    sql_text varchar2(200);
+begin
+    open c for (select /*+partition_parallel(partition,4,16)*/ 41 as n from sys_dummy);
+    fetch c into n;
+    close c;
+    dbe_output.print_line(n);
+    open c for (select abs(7) + count(*) from (select 1 as n from sys_dummy) s);
+    fetch c into n;
+    close c;
+    dbe_output.print_line(n);
+    open c for select 42 as n from sys_dummy;
+    fetch c into n;
+    close c;
+    dbe_output.print_line(n);
+    sql_text := 'select 43 as n from sys_dummy';
+    open c for sql_text;
+    fetch c into n;
+    close c;
+    dbe_output.print_line(n);
+    open c for (sql_text);
+    fetch c into n;
+    close c;
+    dbe_output.print_line(n);
+    open c for 'select :1 as n from sys_dummy' using 45;
+    fetch c into n;
+    close c;
+    dbe_output.print_line(n);
+    sql_text := 'select :1 as n from sys_dummy';
+    open c for (sql_text) using 46;
+    fetch c into n;
+    close c;
+    dbe_output.print_line(n);
+end;
+/
 set serveroutput off;
 
 alter system set use_bison_parser = false;
