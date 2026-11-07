@@ -44,6 +44,7 @@
 #include "ogsql_history.h"
 #include "ogsql_completion.h"
 #include "ogsql_line_editor.h"
+#include "ogsql_vertical.h"
 #include "cm_config.h"
 #include "cm_log.h"
 #include "cm_timer.h"
@@ -256,6 +257,8 @@ char g_sql_buf[MAX_SQL_SIZE + OGSQL_SQL_TEXT_GUARD_LEN];
 spinlock_t g_cancel_lock = 0;
 static int32 g_in_enclosed_char = -1;
 static int32 g_in_comment_count = 0;
+/* vertical result display switch, set when the statement ends with \v/\V */
+static bool32 g_vertical_print = OG_FALSE;
 
 extern char g_load_pswd[];
 extern status_t loader_save_pswd(char *orig_pswd, uint32 orig_len);
@@ -1962,7 +1965,7 @@ static void ogsql_describe_columns(void)
         ogsql_describe_columns_type(name_len, byte_ratio, i);
     }
 
-    if (g_local_config.heading_on) {
+    if (g_local_config.heading_on && !g_vertical_print) {
         ogsql_print_column_titles();
         ogsql_printf("\n");
     }
@@ -2091,16 +2094,106 @@ static void ogsql_print_column_data(void)
     ogsql_printf("\n");
 }
 
+#define OGSQL_VERTICAL_ROW_SEP "------------------------------"
+#define OGSQL_VERTICAL_SEP_LEN 30
+
+static void ogsql_print_vertical_label(const char *name, uint32 label_width)
+{
+    uint32 name_width = ogsql_text_display_width(name, (uint32)strlen(name));
+    uint32 padding = ogsql_vertical_label_padding(name_width, label_width);
+
+    ogsql_printf("%s%*s", name, (int)padding, "");
+}
+
+/* Print one field as "name: value"; continuation lines of a multi-line value
+ * are indented to align with the value start. */
+static void ogsql_print_vertical_field(uint32 label_width, const char *name, const char *value)
+{
+    const char *line_start = value;
+    const char *nl = NULL;
+    uint32 indent = ogsql_vertical_value_indent(label_width);
+    bool32 first = OG_TRUE;
+
+    while (line_start != NULL) {
+        nl = strchr(line_start, '\n');
+        if (nl != NULL) {
+            if (first) {
+                ogsql_print_vertical_label(name, label_width);
+                ogsql_printf(": %.*s\n", (int)(nl - line_start), line_start);
+            } else {
+                ogsql_printf("%*s%.*s\n", (int)indent, "", (int)(nl - line_start), line_start);
+            }
+            line_start = nl + 1;
+            first = OG_FALSE;
+        } else {
+            if (first) {
+                ogsql_print_vertical_label(name, label_width);
+                ogsql_printf(": %s\n", line_start);
+            } else {
+                ogsql_printf("%*s%s\n", (int)indent, "", line_start);
+            }
+            line_start = NULL;
+        }
+    }
+}
+
+/* Print one row of the result set in vertical format, e.g.:
+ * "------------------------------ 1. row ------------------------------"
+ * "          id: 1"
+ * "        name: Alice" */
+static uint32 ogsql_print_vertical_row(uint32 row_no)
+{
+    uint32 i;
+    uint32 name_width;
+    uint32 label_width = 0;
+    uint32 line_count = 1;
+    bool32 is_null = OG_FALSE;
+    void *data = NULL;
+    uint32 size = 0;
+
+    /* g_col_display marks COLUMN format attrs for horizontal width only;
+     * vertical mode always prints every column. */
+    for (i = 0; i < g_column_count; i++) {
+        name_width = ogsql_text_display_width(g_columns[i].name, (uint32)strlen(g_columns[i].name));
+        label_width = MAX(label_width, name_width);
+    }
+
+    ogsql_printf("%.*s %u. row %.*s\n", OGSQL_VERTICAL_SEP_LEN, OGSQL_VERTICAL_ROW_SEP, row_no,
+        OGSQL_VERTICAL_SEP_LEN, OGSQL_VERTICAL_ROW_SEP);
+    for (i = 0; i < g_column_count; i++) {
+        if (ogsql_get_column_as_string(STMT, i, g_str_buf, OG_MAX_PACKET_SIZE) != OG_SUCCESS) {
+            OGSQL_PRINTF(ZSERR_OGSQL, "the %d column print failed", i);
+            continue;
+        }
+
+        (void)ogconn_get_column_by_id(STMT, i, &data, &size, &is_null);
+        if (is_null) {
+            line_count++;
+            ogsql_print_vertical_label(g_columns[i].name, label_width);
+            ogsql_printf(": NULL\n");
+        } else {
+            line_count += ogsql_vertical_text_lines(g_str_buf);
+            ogsql_print_vertical_field(label_width, g_columns[i].name, g_str_buf);
+        }
+    }
+    return line_count;
+}
+
 static void ogsql_print_resultset(void)
 {
     uint32 rows;
     uint32 rows_print;
     uint32 rows_one_page;
     uint32 newpage = 0;
+    uint32 row_no = 0;
+    uint32 vertical_page_lines;
+    uint64 lines_on_page = 0;
     date_t start_time = 0;
 
     rows_print = 0;
     rows_one_page = g_local_config.page_size - OG_MIN_PAGESIZE + 1;
+    vertical_page_lines = (g_local_config.page_size == 0 || g_local_config.page_size == OG_INVALID_INT32) ?
+        0 : g_local_config.page_size;
 
     ogsql_describe_columns();
 
@@ -2116,7 +2209,12 @@ static void ogsql_print_resultset(void)
             return;
         }
 
-        ogsql_print_column_data();
+        row_no++;
+        if (g_vertical_print) {
+            lines_on_page += ogsql_print_vertical_row(row_no);
+        } else {
+            ogsql_print_column_data();
+        }
         rows_print++;
 
         ogsql_get_start_time_for_timer(&start_time);
@@ -2126,18 +2224,22 @@ static void ogsql_print_resultset(void)
         }
         ogsql_get_consumed_time_for_timer(start_time);
 
-        if (rows > 0 && rows_print == rows_one_page) {
+        bool32 need_newpage = g_vertical_print ?
+            ogsql_vertical_need_newpage(lines_on_page, g_column_count, vertical_page_lines) :
+            (rows_print == rows_one_page);
+        if (rows > 0 && need_newpage) {
             for (newpage = 0; newpage < g_local_config.newpage; newpage++) {
                 ogsql_printf("\n");
             }
 
             // already set g_display_widths[OG_MAX_COLUMNS] in ogsql_describe_columns
-            if (g_local_config.heading_on) {
+            if (g_local_config.heading_on && !g_vertical_print) {
                 ogsql_print_column_titles();
                 ogsql_printf("\n");
             }
 
             rows_print = 0;
+            lines_on_page = 0;
         }
     }
 }
@@ -2664,14 +2766,19 @@ static bool32 ogconn_if_need_trace()
     return OG_TRUE;
 }
 
-status_t ogsql_execute(text_t *line)
+static status_t ogsql_execute_internal(text_t *line, bool32 vertical_print)
 {
     text_t output_sql;
+    bool32 old_vertical_print = OG_FALSE;
 
     if (line != NULL) {
         (void)cm_text_set(&g_sql_text, g_sql_text.len, '\0');
         CM_TEXT_CLEAR(&g_sql_text);
         OG_RETURN_IFERR(ogsql_concat(line));
+    }
+
+    if (ogsql_vertical_strip_marker(&g_sql_text)) {
+        vertical_print = OG_TRUE;
     }
 
     if (cm_abs64(g_sql_text.str + g_sql_text.len - g_sql_buf) > MAX_SQL_SIZE) {
@@ -2717,11 +2824,19 @@ status_t ogsql_execute(text_t *line)
     if (g_local_config.trace_mode == OGSQL_TRACE_ONLY && ogconn_if_need_trace()) {
         ogsql_no_print_result();
     } else {
+        old_vertical_print = g_vertical_print;
+        g_vertical_print = vertical_print;
         ogsql_print_result();
+        g_vertical_print = old_vertical_print;
     }
 
     ogsql_print_timer();
     return OG_SUCCESS;
+}
+
+status_t ogsql_execute(text_t *line)
+{
+    return ogsql_execute_internal(line, OG_FALSE);
 }
 
 static inline status_t ogsql_concat(text_t *line)
@@ -3146,11 +3261,58 @@ static status_t ogsql_process_autotrace_cmd(void)
     return OG_SUCCESS;
 }
 
+static bool32 ogsql_vertical_terminates_code(const text_t *line, int32 enclosed_char, uint32 comment_count)
+{
+    uint32 i;
+    char c;
+
+    if (!ogsql_vertical_is_terminated(line)) {
+        return OG_FALSE;
+    }
+
+    for (i = 0; i < line->len; i++) {
+        c = line->str[i];
+        if (comment_count > 0) {
+            if (c == '*' && i + 1 < line->len && line->str[i + 1] == '/') {
+                comment_count--;
+                i++;
+            }
+            continue;
+        }
+
+        if (enclosed_char >= 0) {
+            if (c == enclosed_char) {
+                if (c == '\'' && i + 1 < line->len && line->str[i + 1] == '\'') {
+                    i++;
+                    continue;
+                }
+                enclosed_char = -1;
+            }
+            continue;
+        }
+
+        if (c == '\'' || c == '"' || c == '`') {
+            enclosed_char = c;
+        } else if (c == '/' && i + 1 < line->len && line->str[i + 1] == '*') {
+            comment_count++;
+            i++;
+        } else if (c == '-' && i + 1 < line->len && line->str[i + 1] == '-') {
+            return OG_FALSE;
+        }
+    }
+
+    return (enclosed_char < 0 && comment_count == 0) ? OG_TRUE : OG_FALSE;
+}
+
 static status_t ogsql_exec_multiline_cmd()
 {
     text_t sql_text;
     status_t status = OG_SUCCESS;
+    bool32 vertical_print = OG_FALSE;
 
+    if (ogsql_vertical_strip_marker(&g_sql_text)) {
+        vertical_print = OG_TRUE;
+    }
     sql_text = g_sql_text;
     print_sql_command(g_sql_text.str, g_sql_text.len);
     ogsql_reset_in_enclosed_char();
@@ -3196,7 +3358,7 @@ static status_t ogsql_exec_multiline_cmd()
         status = ogsql_import(&sql_text);
     } else {
         (void)ogconn_set_conn_attr(CONN, OGCONN_ATTR_AUTOTRACE, &g_local_config.trace_mode, sizeof(uint32));
-        status = ogsql_execute(NULL);
+        status = ogsql_execute_internal(NULL, vertical_print);
         if (status == OG_SUCCESS && !OGSQL_CANCELING && g_local_config.trace_mode) {
             status = ogsql_process_autotrace_cmd();
         }
@@ -3218,7 +3380,9 @@ static status_t ogsql_process_multiline_cmd(text_t *line)
     if (CM_IS_EMPTY(line)) {
         return ogsql_concat_appendlf(line);
     }
-    if (CM_TEXT_END(line) == ';' && g_in_comment_count == 0) {
+    if (g_in_enclosed_char < 0 && g_in_comment_count == 0 && ogsql_vertical_is_terminated(line)) {
+        is_end = OG_TRUE;
+    } else if (CM_TEXT_END(line) == ';' && g_in_comment_count == 0) {
         is_end = OG_TRUE;
         line->len--;
     }
@@ -3562,6 +3726,19 @@ static bool32 ogsql_fetch_cmd(text_t *line, text_t *sub_cmd)
         }
 
         if (!g_in_comment_count && OGSQL_IS_SPLIT_CHAR(c)) {  // encounter split CHAR
+            text_t rest = { line->str + i + 1, line->len - (i + 1) };
+            uint32 marker_len = ogsql_vertical_marker_prefix_len(&rest);
+            if (marker_len > 0) {
+                /* "stmt;\v", "stmt; \v", or "stmt;\v;": keep the marker attached
+                 * to this statement so it can be stripped before execution. */
+                sub_cmd->len = i + 1 + marker_len;
+                line->str += sub_cmd->len;
+                line->len -= sub_cmd->len;
+                if (line->len == 0) {
+                    line->str = NULL;
+                }
+                return OG_TRUE;
+            }
             sub_cmd->len = i + 1;                            // include the split char
             line->str += i + 1;
             line->len -= (i + 1);
@@ -4571,6 +4748,10 @@ static void ogsql_if_multi_line(text_t *line, uint32 *flag)
         return;
     }
 
+    if (ogsql_vertical_terminates_code(line, -1, 0)) {
+        return;
+    }
+
     *flag = OGSQL_MULTI_TAG;
     return;
 }
@@ -4587,6 +4768,11 @@ static void ogsql_if_multi_line_end(text_t *line, uint32 *flag)
     cm_trim_text(&temp_line);
 
     if (line->str[pos] == ';' || (temp_line.len == 1 && CM_TEXT_FIRST(&temp_line) == '/')) {
+        *flag = OGSQL_MULTI_END_TAG;
+        return;
+    }
+
+    if (ogsql_vertical_terminates_code(&temp_line, g_in_enclosed_char, g_in_comment_count)) {
         *flag = OGSQL_MULTI_END_TAG;
         return;
     }
