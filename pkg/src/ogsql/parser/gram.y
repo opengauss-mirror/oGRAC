@@ -127,6 +127,7 @@ static expr_tree_t *bison_make_pl_cursor_attr_or_mod_expr(core_yyscan_t yyscanne
 static expr_tree_t *bison_make_oper_expr(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,
     expr_node_type_t node_type, source_location_t loc);
 static cmp_type_t bison_cmpop_to_cmp_type(const char *op);
+static cond_node_t *bison_make_null_cond(core_yyscan_t yyscanner, expr_tree_t *left, cmp_type_t cmp_type);
 static cond_node_t *bison_make_compare_cond(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,
     cmp_type_t cmp_type, source_location_t loc);
 static cond_node_t *bison_make_in_select_cond(core_yyscan_t yyscanner, expr_tree_t *left, sql_select_t *select_ctx,
@@ -3301,35 +3302,31 @@ cond_node:
             }
             | expr_with_select IS NULL_P
             {
-                cond_node_t *node = NULL;
-                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_abort_or_yyerror("alloc cond node failed");
+                $$ = bison_make_null_cond(yyscanner, $1, CMP_TYPE_IS_NULL);
+                if ($$ == NULL) {
+                    parser_abort_or_yyerror("alloc null condition failed");
                 }
-                node->type = COND_NODE_COMPARE;
-                if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_abort_or_yyerror("alloc cmp node failed");
-                }
-                node->cmp->type = CMP_TYPE_IS_NULL;
-                node->cmp->left = $1;
-                fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
-                $$ = node;
             }
             | expr_with_select IS NOT NULL_P
             {
-                cond_node_t *node = NULL;
-                sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
-                if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
-                    parser_abort_or_yyerror("alloc cond node failed");
+                $$ = bison_make_null_cond(yyscanner, $1, CMP_TYPE_IS_NOT_NULL);
+                if ($$ == NULL) {
+                    parser_abort_or_yyerror("alloc null condition failed");
                 }
-                node->type = COND_NODE_COMPARE;
-                if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
-                    parser_abort_or_yyerror("alloc cmp node failed");
+            }
+            | parenthesized_oper_expr IS NULL_P
+            {
+                $$ = bison_make_null_cond(yyscanner, $1, CMP_TYPE_IS_NULL);
+                if ($$ == NULL) {
+                    parser_abort_or_yyerror("alloc null condition failed");
                 }
-                node->cmp->type = CMP_TYPE_IS_NOT_NULL;
-                node->cmp->left = $1;
-                fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
-                $$ = node;
+            }
+            | parenthesized_oper_expr IS NOT NULL_P
+            {
+                $$ = bison_make_null_cond(yyscanner, $1, CMP_TYPE_IS_NOT_NULL);
+                if ($$ == NULL) {
+                    parser_abort_or_yyerror("alloc null condition failed");
+                }
             }
             | expr_with_select IS JSON
             {
@@ -3525,44 +3522,80 @@ parenthesized_bare_expr:
 
 parenthesized_oper_expr:
             parenthesized_bare_expr                      { $$ = $1; }
-            | parenthesized_bare_expr '+' a_expr
+            /* Keep continuations here so normal operator precedence can reduce the left expression. */
+            | parenthesized_oper_expr '+' a_expr
                 {
                     $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_ADD, @2.loc);
                     if ($$ == NULL) {
                         parser_abort_or_yyerror("init operator expr failed");
                     }
                 }
-            | parenthesized_bare_expr '-' a_expr
+            | parenthesized_oper_expr '-' a_expr
                 {
                     $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_SUB, @2.loc);
                     if ($$ == NULL) {
                         parser_abort_or_yyerror("init operator expr failed");
                     }
                 }
-            | parenthesized_bare_expr '*' a_expr
+            | parenthesized_oper_expr '*' a_expr
                 {
                     $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_MUL, @2.loc);
                     if ($$ == NULL) {
                         parser_abort_or_yyerror("init operator expr failed");
                     }
                 }
-            | parenthesized_bare_expr '/' a_expr
+            | parenthesized_oper_expr '/' a_expr
                 {
                     $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_DIV, @2.loc);
                     if ($$ == NULL) {
                         parser_abort_or_yyerror("init operator expr failed");
                     }
                 }
-            | parenthesized_bare_expr '%' a_expr
+            | parenthesized_oper_expr '%' a_expr
                 {
                     $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_MOD, @2.loc);
                     if ($$ == NULL) {
                         parser_abort_or_yyerror("init operator expr failed");
                     }
                 }
-            | parenthesized_bare_expr OPER_CAT a_expr
+            | parenthesized_oper_expr OPER_CAT a_expr
                 {
                     $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_CAT, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
+            | parenthesized_oper_expr '|' a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_BITOR, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
+            | parenthesized_oper_expr '^' a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_BITXOR, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
+            | parenthesized_oper_expr '&' a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_BITAND, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
+            | parenthesized_oper_expr OPER_LSHIFT a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_LSHIFT, @2.loc);
+                    if ($$ == NULL) {
+                        parser_abort_or_yyerror("init operator expr failed");
+                    }
+                }
+            | parenthesized_oper_expr OPER_RSHIFT a_expr
+                {
+                    $$ = bison_make_oper_expr(yyscanner, $1, $3, EXPR_NODE_RSHIFT, @2.loc);
                     if ($$ == NULL) {
                         parser_abort_or_yyerror("init operator expr failed");
                     }
@@ -18908,6 +18941,24 @@ static cmp_type_t bison_cmpop_to_cmp_type(const char *op)
         return CMP_TYPE_NULL_CMP_OP;
     }
     return CMP_TYPE_UNKNOWN;
+}
+
+static cond_node_t *bison_make_null_cond(core_yyscan_t yyscanner, expr_tree_t *left, cmp_type_t cmp_type)
+{
+    cond_node_t *node = NULL;
+    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+
+    if (sql_alloc_mem(stmt->context, sizeof(cond_node_t), (void **)&node) != OG_SUCCESS) {
+        return NULL;
+    }
+    node->type = COND_NODE_COMPARE;
+    if (sql_alloc_mem(stmt->context, sizeof(cmp_node_t), (void **)&node->cmp) != OG_SUCCESS) {
+        return NULL;
+    }
+    node->cmp->type = cmp_type;
+    node->cmp->left = left;
+    fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
+    return node;
 }
 
 static cond_node_t *bison_make_compare_cond(core_yyscan_t yyscanner, expr_tree_t *left, expr_tree_t *right,

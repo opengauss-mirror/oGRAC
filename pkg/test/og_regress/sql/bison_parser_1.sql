@@ -1686,4 +1686,5 @@ select count(*) from (
     join (select level as n from sys_dummy connect by level <= 30) t2 on t1.n = t2.n
     limit 5, 10);
 
+select count(*) as matched from sys_dummy where (null-1) is null and (1-1) is not null and (4-1)/2-2 is not null;
 alter system set use_bison_parser = false;
