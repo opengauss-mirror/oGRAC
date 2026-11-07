@@ -290,6 +290,21 @@ SQL>
 SQL> DROP TABLE IF EXISTS DATA_DS_TEST;
 Succeed.
 
+SQL> CREATE TABLE DATA_DS_TEST(id INT);
+Succeed.
+
+SQL> SELECT COUNT(*) FROM DATA_DS_TEST WHERE id > 0;
+
+COUNT(*)            
+--------------------
+0                   
+
+1 rows fetched.
+
+SQL> DROP TABLE DATA_DS_TEST;
+Succeed.
+
+SQL>
 
 
 

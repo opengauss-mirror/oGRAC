@@ -691,6 +691,20 @@ static bool32 estimate_table_total_pages(sql_stmt_t *stmt, sql_table_t *table, u
         estimate_plain_table_pages(stmt, table, entity, total_pages);
     }
 
+    cbo_stats_table_t *tab_stats = (entity->cbo_table_stats == NULL) ? NULL :
+        knl_get_cbo_table(KNL_SESSION(stmt), entity);
+    if (*total_pages == 0 && tab_stats != NULL && tab_stats->analyse_time != 0 &&
+        tab_stats->rows == 0 && tab_stats->blocks == 0) {
+        uint32 pages = 0;
+        if (IS_PART_TABLE(&entity->table)) {
+            // An empty scan partition does not imply that the whole table is empty.
+            knl_estimate_table_rows(&pages, NULL, KNL_SESSION(stmt), entity, CBO_GLOBAL_PART_NO);
+        }
+        // Segmentless empty tables may have no column histograms. Resampling them invalidates the
+        // dictionary again and can keep execution in the reparse loop.
+        OG_RETVALUE_IFTRUE(pages == 0, OG_FALSE);
+    }
+
     return ensure_min_pages(entity, total_pages);
 }
 

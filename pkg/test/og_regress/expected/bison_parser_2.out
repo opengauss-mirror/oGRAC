@@ -869,8 +869,12 @@ SQL> drop table if exists bison_t1;
 
 Succeed.
 
-SQL> create table bison_t1 (a int unique, b int default 2 on update 5, c char(5) not null collate 'UTF8_BIN', d int check (d > 0) comment 'gt 0',
+SQL> create table bison_t1 (a int unique, b int default 2 on update 5, c char(5) not null collate 'UTF8_BIN', d int constraint bison_inline_ck check (d > 0) comment 'gt 0',
   2     constraint p_key3 primary key (b) enable initially immediate rely parallel 2 validate);
+
+Succeed.
+
+SQL> alter table bison_t1 enable validate constraint bison_inline_ck;
 
 Succeed.
 

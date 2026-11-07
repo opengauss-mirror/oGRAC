@@ -310,8 +310,9 @@ create library lib_is is '/usr/lib/lib1.so';
 
 drop table if exists bison_t2;
 drop table if exists bison_t1;
-create table bison_t1 (a int unique, b int default 2 on update 5, c char(5) not null collate 'UTF8_BIN', d int check (d > 0) comment 'gt 0',
+create table bison_t1 (a int unique, b int default 2 on update 5, c char(5) not null collate 'UTF8_BIN', d int constraint bison_inline_ck check (d > 0) comment 'gt 0',
     constraint p_key3 primary key (b) enable initially immediate rely parallel 2 validate);
+alter table bison_t1 enable validate constraint bison_inline_ck;
 create table bison_t2 (a int auto_increment, b int references bison_t1(b) on delete cascade, c char(5) constraint null_c null,
     primary key (a) using index reverse) initrans 50 maxtrans 80 pctfree 10 crmode page format csf
     storage (initial 64K next 5K maxsize 1024K) auto_increment 5
