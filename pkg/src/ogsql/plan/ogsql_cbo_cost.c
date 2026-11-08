@@ -696,6 +696,43 @@ static double calc_normalized_string_position(sql_stmt_t *stmt,
 
 #undef MAX_STR_COMPARE_LEN
 
+/*
+ * Histogram interpolation needs the distance between two column values as a plain number.
+ * DATE subtracts to NUMBER (days), but TIMESTAMP subtracts to INTERVAL DAY TO SECOND
+ * (opr_sub.c: sub_timestamp_timestamp) which var_as_real() rejects; without the interval
+ * handling below every interpolation on a timestamp column fell back to the default filter
+ * factor, so its statistics were never used. Only the ratio of two distances of the same
+ * unit is consumed, so the raw linear encodings (microseconds for INTERVAL_DS, months for
+ * INTERVAL_YM) are enough.
+ */
+static bool32 sql_hist_sub_to_real(sql_stmt_t *stmt, variant_t *left, variant_t *right, double *distance)
+{
+    variant_t result;
+
+    if (opr_exec(OPER_TYPE_SUB, SESSION_NLS(stmt), left, right, &result) != OG_SUCCESS) {
+        cm_reset_error();
+        return OG_FALSE;
+    }
+
+    switch (result.type) {
+        case OG_TYPE_INTERVAL_DS:
+            *distance = (double)result.v_itvl_ds;
+            return OG_TRUE;
+        case OG_TYPE_INTERVAL_YM:
+            *distance = (double)result.v_itvl_ym;
+            return OG_TRUE;
+        default:
+            break;
+    }
+
+    if (var_as_real(&result) != OG_SUCCESS) {
+        cm_reset_error();
+        return OG_FALSE;
+    }
+    *distance = result.v_real;
+    return OG_TRUE;
+}
+
 static double ineq_balanced_hist_factor_var(sql_stmt_t *stmt, dc_entity_t *entity, uint32 col_id,
     cbo_stats_column_t *column_stats, variant_t *const_val, bool isgt)
 {
@@ -734,17 +771,13 @@ static double ineq_balanced_hist_factor_var(sql_stmt_t *stmt, dc_entity_t *entit
         }
         knl_cbo_text2variant(entity, col_id, &column_stats->column_hist[low_bound]->ep_value, &right_var);
 
-        variant_t bucket_var;
-        OG_RETVALUE_IFTRUE(opr_exec(OPER_TYPE_SUB, SESSION_NLS(stmt), const_val, &left_var, &bucket_var) != OG_SUCCESS,
-                           CBO_DEFAULT_INEQ_FF);
-
-        variant_t hist_var;
-        OG_RETVALUE_IFTRUE(opr_exec(OPER_TYPE_SUB, SESSION_NLS(stmt), &right_var, &left_var, &hist_var) != OG_SUCCESS,
-                           CBO_DEFAULT_INEQ_FF);
-
-        OG_RETVALUE_IFTRUE(var_as_real(&bucket_var) != OG_SUCCESS, CBO_DEFAULT_INEQ_FF);
-        OG_RETVALUE_IFTRUE(var_as_real(&hist_var) != OG_SUCCESS, CBO_DEFAULT_INEQ_FF);
-        hist_frac = bucket_var.v_real / hist_var.v_real;
+        double bucket_distance;
+        double hist_distance;
+        if (!sql_hist_sub_to_real(stmt, const_val, &left_var, &bucket_distance) ||
+            !sql_hist_sub_to_real(stmt, &right_var, &left_var, &hist_distance) || hist_distance == 0) {
+            return CBO_DEFAULT_INEQ_FF;
+        }
+        hist_frac = bucket_distance / hist_distance;
 
         hist_frac += low_bound;
         hist_frac /= n_hist;
@@ -842,19 +875,15 @@ static double eq_balanced_hist_factor_var(sql_stmt_t *stmt, dc_entity_t *entity,
         hist_frac = num_eq_slot * 1.0 / n_hist;
     } else {
         /* 1.c && 2.a */
-        variant_t bucket_var;
-        OG_RETVALUE_IFTRUE(opr_exec(OPER_TYPE_SUB, SESSION_NLS(stmt), &right_var, &left_var, &bucket_var) !=
-                           OG_SUCCESS, CBO_DEFAULT_EQ_FF);
-
         variant_t high_var;
+        double bucket_distance;
+        double hist_distance;
         knl_cbo_text2variant(entity, col_id, &column_stats->high_value, &high_var);
-        variant_t hist_var;
-        OG_RETVALUE_IFTRUE(opr_exec(OPER_TYPE_SUB, SESSION_NLS(stmt), &high_var, &low_var, &hist_var) != OG_SUCCESS,
-                           CBO_DEFAULT_EQ_FF);
-
-        OG_RETVALUE_IFTRUE(var_as_real(&bucket_var) != OG_SUCCESS, CBO_DEFAULT_EQ_FF);
-        OG_RETVALUE_IFTRUE(var_as_real(&hist_var) != OG_SUCCESS, CBO_DEFAULT_EQ_FF);
-        hist_frac = bucket_var.v_real / hist_var.v_real;
+        if (!sql_hist_sub_to_real(stmt, &right_var, &left_var, &bucket_distance) ||
+            !sql_hist_sub_to_real(stmt, &high_var, &low_var, &hist_distance) || hist_distance == 0) {
+            return CBO_DEFAULT_EQ_FF;
+        }
+        hist_frac = bucket_distance / hist_distance;
 
         /* num_distinct in this bucket */
         hist_frac *= column_stats->num_distinct;
