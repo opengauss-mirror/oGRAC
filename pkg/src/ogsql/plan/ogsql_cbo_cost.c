@@ -764,12 +764,27 @@ static double ineq_balanced_hist_factor_var(sql_stmt_t *stmt, dc_entity_t *entit
         /* 1.b && 2 */
         variant_t left_var;
         variant_t right_var;
+        variant_t const_copy;
         if (low_bound == 0) {
             left_var = low_var;
         } else {
             knl_cbo_text2variant(entity, col_id, &column_stats->column_hist[low_bound - 1]->ep_value, &left_var);
         }
         knl_cbo_text2variant(entity, col_id, &column_stats->column_hist[low_bound]->ep_value, &right_var);
+
+        /*
+         * A character constant has to be parsed into the column type before the distance is computed:
+         * there is no (varchar, date/timestamp) subtraction rule (opr_sub.c has only the reverse one),
+         * so "where ts > '2026-10-01 00:00:00'" used to fall back to the default filter factor.
+         */
+        if (OG_IS_STRING_TYPE(const_val->type) && OG_IS_DATETIME_TYPE(left_var.type)) {
+            const_copy = *const_val;
+            if (sql_convert_variant(stmt, &const_copy, left_var.type) != OG_SUCCESS) {
+                cm_reset_error();
+                return CBO_DEFAULT_INEQ_FF;
+            }
+            const_val = &const_copy;
+        }
 
         double bucket_distance;
         double hist_distance;
