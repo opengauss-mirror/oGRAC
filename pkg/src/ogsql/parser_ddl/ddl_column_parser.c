@@ -1500,6 +1500,10 @@ static status_t og_parse_column_check(sql_stmt_t *stmt, knl_column_def_t *column
     column->check_text = attr->check_text;
     column->is_check = OG_TRUE;
     column->check_cond = attr->cond;
+    if (attr->cons_name != NULL) {
+        column->inl_chk_cons_name.str = attr->cons_name;
+        column->inl_chk_cons_name.len = strlen(attr->cons_name);
+    }
     *ex_flags |= COLUMN_EX_CHECK;
     return OG_SUCCESS;
 }
