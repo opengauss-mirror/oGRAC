@@ -1,5 +1,12 @@
 alter system set use_bison_parser = true;
 
+declare sid int;
+begin
+    sid := dbe_debug.init(1);
+    dbe_debug.uninit;
+end;
+/
+
 drop view if exists bison_pl_c_alias_view;
 create view bison_pl_c_alias_view as select 1 c from sys_dummy;
 drop view bison_pl_c_alias_view;
