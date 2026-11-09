@@ -290,7 +290,7 @@ static void og_modify_rewrite_tbl(sql_table_t *rewrite_tbl, sql_select_t *sub_sl
     rewrite_tbl->sub_tables = NULL;
 }
 
-static status_t og_rewrite_tbl_as_slct(sql_table_t *rewrite_tbl, sql_stmt_t *statement)
+status_t og_rewrite_tbl_as_slct(sql_table_t *rewrite_tbl, sql_stmt_t *statement)
 {
     sql_table_t *new_tbl = NULL;
     OG_RETURN_IFERR(sql_alloc_mem(statement->context, sizeof(sql_table_t), (void **)&new_tbl));

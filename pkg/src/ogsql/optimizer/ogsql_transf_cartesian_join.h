@@ -35,6 +35,8 @@ extern "C" {
 
 status_t og_transf_cartesian_join(sql_stmt_t *statement, sql_query_t *qry);
 
+status_t og_rewrite_tbl_as_slct(sql_table_t *rewrite_tbl, sql_stmt_t *statement);
+
 #ifdef __cplusplus
 }
 #endif

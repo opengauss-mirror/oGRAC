@@ -24,6 +24,7 @@
  */
 
 #include "ogsql_join_elimination.h"
+#include "ogsql_transf_cartesian_join.h"
 #include "cbo_join.h"
 #include "ogsql_winsort.h"
 #include "plan_rbo.h"
@@ -1492,6 +1493,195 @@ static inline bool32 has_qry_cond_to_optimize(sql_query_t *qry)
 {
     CM_POINTER(qry);
     return qry->cond != NULL;
+}
+
+/*
+ * A table joined by a comma/cross join that carries no condition and that no
+ * clause of the query references only multiplies the input rows. On a
+ * deduplicating query that multiplication cannot change the result, but it does
+ * multiply the cost: a six column cube repeats the whole input once per
+ * grouping set. Rewrite such a table into an existence probe
+ * (SELECT 1 FROM T LIMIT 1) instead of removing it, so that an empty table
+ * still yields no row and the table stays in the statement for the
+ * authorization checks.
+ */
+static status_t og_set_probe_limit(sql_stmt_t *statement, sql_query_t *sub_qry)
+{
+    expr_node_t *exprn = NULL;
+    expr_tree_t *exprtr = NULL;
+
+    OG_RETURN_IFERR(sql_alloc_mem(statement->context, sizeof(expr_node_t), (void **)&exprn));
+    OG_RETURN_IFERR(sql_alloc_mem(statement->context, sizeof(expr_tree_t), (void **)&exprtr));
+    exprn->type = EXPR_NODE_CONST;
+    exprn->datatype = OG_TYPE_BIGINT;
+    exprn->value.type = OG_TYPE_BIGINT;
+    exprn->value.v_bigint = 1;
+    exprn->owner = exprtr;
+    exprtr->root = exprn;
+    exprtr->owner = statement->context;
+    exprtr->next = NULL;
+    sub_qry->limit.count = (void *)exprtr;
+    return OG_SUCCESS;
+}
+
+static status_t og_rewrite_cross_tbl_as_probe(sql_stmt_t *statement, sql_query_t *qry, sql_table_t *tbl)
+{
+    sql_query_t *sub_qry = NULL;
+
+    OG_RETURN_IFERR(og_rewrite_tbl_as_slct(tbl, statement));
+    tbl->select_ctx->parent = qry;
+    sub_qry = (sql_query_t *)tbl->select_ctx->root->query;
+    OG_RETURN_IFERR(og_modify_rs_cols2const(statement, sub_qry));
+    return og_set_probe_limit(statement, sub_qry);
+}
+
+static bool32 og_tree_has_volatile(visit_assist_t *v_ast, expr_tree_t *tree)
+{
+    if (tree == NULL) {
+        return OG_FALSE;
+    }
+    v_ast->result0 = OG_FALSE;
+    if (visit_expr_tree(v_ast, tree, check_volatile_expr_node) != OG_SUCCESS) {
+        return OG_TRUE;
+    }
+    return (bool32)v_ast->result0;
+}
+
+static bool32 og_cond_has_volatile(visit_assist_t *v_ast, cond_tree_t *tree)
+{
+    if (tree == NULL) {
+        return OG_FALSE;
+    }
+    v_ast->result0 = OG_FALSE;
+    if (visit_cond_node(v_ast, tree->root, check_volatile_expr_node) != OG_SUCCESS) {
+        return OG_TRUE;
+    }
+    return (bool32)v_ast->result0;
+}
+
+/*
+ * Duplicating an input row must not change any evaluated value; a volatile
+ * function (SYS_GUID, RAND ...) in a select item, grouping key, aggregate
+ * argument, sort key or predicate would break that, so such a query keeps its
+ * cartesian join.
+ */
+static bool32 og_qry_has_volatile(sql_stmt_t *statement, sql_query_t *qry)
+{
+    visit_assist_t v_ast;
+    rs_column_t *col = NULL;
+    group_set_t *set = NULL;
+    sort_item_t *item = NULL;
+    expr_node_t *exprn = NULL;
+    uint32 i = 0;
+    uint32 j = 0;
+
+    sql_init_visit_assist(&v_ast, statement, qry);
+    v_ast.excl_flags = VA_EXCL_FUNC | VA_EXCL_PROC | VA_EXCL_PRIOR | VA_EXCL_ARRAY;
+    while (i < qry->rs_columns->count) {
+        col = (rs_column_t *)cm_galist_get(qry->rs_columns, i++);
+        if (col->type == RS_COL_CALC && og_tree_has_volatile(&v_ast, col->expr)) {
+            return OG_TRUE;
+        }
+    }
+    i = 0;
+    while (i < qry->group_sets->count) {
+        set = (group_set_t *)cm_galist_get(qry->group_sets, i++);
+        j = 0;
+        while (j < set->items->count) {
+            if (og_tree_has_volatile(&v_ast, (expr_tree_t *)cm_galist_get(set->items, j++))) {
+                return OG_TRUE;
+            }
+        }
+    }
+    i = 0;
+    while (i < qry->aggrs->count) {
+        exprn = (expr_node_t *)cm_galist_get(qry->aggrs, i++);
+        v_ast.result0 = OG_FALSE;
+        if (visit_expr_node(&v_ast, &exprn, check_volatile_expr_node) != OG_SUCCESS || v_ast.result0) {
+            return OG_TRUE;
+        }
+    }
+    i = 0;
+    while (i < qry->sort_items->count) {
+        item = (sort_item_t *)cm_galist_get(qry->sort_items, i++);
+        if (og_tree_has_volatile(&v_ast, item->expr)) {
+            return OG_TRUE;
+        }
+    }
+    return og_cond_has_volatile(&v_ast, qry->cond) || og_cond_has_volatile(&v_ast, qry->having_cond) ||
+        og_cond_has_volatile(&v_ast, qry->filter_cond);
+}
+
+/*
+ * The result must not depend on how many times an input row is repeated.
+ * Group by (any number of grouping sets, cube/rollup included) and distinct
+ * both collapse duplicates; aggregates that accumulate rows (count/sum/avg)
+ * keep the table.
+ */
+static bool32 og_cross_qry_dedups(sql_stmt_t *statement, sql_query_t *qry)
+{
+    CM_POINTER2(statement, qry);
+    OG_RETVALUE_IFTRUE(QUERY_HAS_ROWNUM(qry), OG_FALSE);
+    OG_RETVALUE_IFTRUE(qry->aggrs->count > 0 && !aggr_has_dedup(statement, qry), OG_FALSE);
+    OG_RETVALUE_IFTRUE(qry->group_sets != NULL && qry->group_sets->count > 0, OG_TRUE);
+    OG_RETVALUE_IFTRUE(qry->aggrs->count > 0, OG_TRUE);
+    OG_RETVALUE_IFTRUE(!qry->has_distinct, OG_FALSE);
+    return !check_distinct_volatile_args(statement, qry);
+}
+
+static status_t og_probe_leaf(sql_stmt_t *statement, sql_query_t *qry, sql_join_node_t *leaf)
+{
+    if (leaf == NULL || leaf->type != JOIN_TYPE_NONE) {
+        return OG_SUCCESS;
+    }
+    sql_table_t *tbl = TABLE_OF_JOIN_LEAF(leaf);
+    if (tbl == NULL || tbl->type != NORMAL_TABLE || tbl->rowid_exists || tbl->rownodeid_exists) {
+        return OG_SUCCESS;
+    }
+    /* every clause creates a query_field on a table it references */
+    if (tbl->query_fields.count != 0) {
+        return OG_SUCCESS;
+    }
+    return og_rewrite_cross_tbl_as_probe(statement, qry, tbl);
+}
+
+static status_t og_probe_in_tree(sql_stmt_t *statement, sql_query_t *qry, sql_join_node_t *jnode)
+{
+    CM_POINTER3(statement, qry, jnode);
+    if (jnode->type == JOIN_TYPE_NONE) {
+        return OG_SUCCESS;
+    }
+    if ((jnode->type == JOIN_TYPE_COMMA || jnode->type == JOIN_TYPE_CROSS) && jnode->join_cond == NULL) {
+        OG_RETURN_IFERR(og_probe_leaf(statement, qry, jnode->left));
+        OG_RETURN_IFERR(og_probe_leaf(statement, qry, jnode->right));
+    }
+    OG_RETURN_IFERR(og_probe_in_tree(statement, qry, jnode->left));
+    return og_probe_in_tree(statement, qry, jnode->right);
+}
+
+status_t og_transf_cartesian_probe(sql_stmt_t *statement, sql_query_t *qry)
+{
+    CM_POINTER2(statement, qry);
+    if (!ogsql_opt_param_is_enable(statement, g_instance->sql.enable_join_elimination, OPT_JOIN_ELIMINATION)) {
+        return OG_SUCCESS;
+    }
+    if (qry->is_s_query || qry->tables.count <= 1 || qry->join_assist.join_node == NULL) {
+        return OG_SUCCESS;
+    }
+    if (statement->context->type != OGSQL_TYPE_SELECT) {
+        return OG_SUCCESS;
+    }
+    if (qry->for_update || QUERY_HAS_ROWNUM(qry)) {
+        return OG_SUCCESS;
+    }
+    if (qry->connect_by_cond != NULL || qry->pivot_items != NULL || qry->ssa.count > 0 ||
+        qry->winsort_list->count > 0) {
+        return OG_SUCCESS;
+    }
+    if (!og_cross_qry_dedups(statement, qry) || og_qry_has_volatile(statement, qry)) {
+        return OG_SUCCESS;
+    }
+    return og_probe_in_tree(statement, qry, qry->join_assist.join_node);
 }
 
 status_t og_transf_optimize_outer_join(sql_stmt_t *statement, sql_query_t *qry)
