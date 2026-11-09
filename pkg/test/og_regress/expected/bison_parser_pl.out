@@ -4,6 +4,16 @@ SQL> alter system set use_bison_parser = true;
 
 Succeed.
 
+SQL>
+SQL> declare sid int;
+  2 begin
+  3     sid := dbe_debug.init(1);
+  4     dbe_debug.uninit;
+  5 end;
+  6 /
+
+PL/SQL procedure successfully completed.
+
 SQL> 
 SQL> drop view if exists bison_pl_c_alias_view;
 

@@ -17601,6 +17601,7 @@ snapshot_alias_keyword:
             | INFINITE_P
             | INHERIT
             | INHERITS
+            | INIT
             | INITIAL_P
             | INITRANS
             | INLINE_P
@@ -18155,7 +18156,6 @@ reserved_keyword:
             | IMCSTORED
             | IN_P
             | INDEX_P
-            | INIT
             | INITIALLY
             | INSERT
             | INTERSECT_P
