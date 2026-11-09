@@ -308,8 +308,17 @@ status_t buf_load_page_from_disk(knl_session_t *session, buf_ctrl_t *ctrl, page_
             g_knl_callback.accumate_io(session, IO_TYPE_READ);
             if (buf_check_load_page(session, ctrl->page, page_id, OG_FALSE)) {
                 OG_LOG_RUN_WAR("[BUFFER] page %u-%u passed load check on retry", page_id.file, page_id.page);
-                knl_panic_log(lsn <= ctrl->page->lsn || OGRAC_SESSION_IN_RECOVERY(session),
-                              "buf load page from disk lsn [%llu-%llu]", (uint64)lsn, (uint64)ctrl->page->lsn);
+                if (lsn > ctrl->page->lsn && !OGRAC_SESSION_IN_RECOVERY(session)) {
+                    if (session->kernel->attr.enable_ubsmem && ctrl->disk_expect_lsn != 0) {
+                        OG_LOG_RUN_ERR("[BUFFER][%u-%u]: mem>disk on load defer disk_expect local(%llu) "
+                            "disk(%llu) expect(%llu)",
+                            page_id.file, page_id.page, (uint64)lsn, (uint64)ctrl->page->lsn,
+                            (uint64)ctrl->disk_expect_lsn);
+                        return OG_SUCCESS;
+                    }
+                    knl_panic_log(0, "buf load page from disk lsn [%llu-%llu]", (uint64)lsn,
+                                  (uint64)ctrl->page->lsn);
+                }
                 return OG_SUCCESS;
             }
         } else {
@@ -330,8 +339,20 @@ status_t buf_load_page_from_disk(knl_session_t *session, buf_ctrl_t *ctrl, page_
         return OG_ERROR;
     }
 
-    knl_panic_log(lsn <= ctrl->page->lsn || OGRAC_SESSION_IN_RECOVERY(session),
-                  "buf load page from disk lsn [%llu-%llu]", (uint64)lsn, (uint64)ctrl->page->lsn);
+    if (lsn > ctrl->page->lsn && !OGRAC_SESSION_IN_RECOVERY(session)) {
+        /*
+         * Design §5.7: with disk_expect after GBP eviction, let buf_load_page handle EAGAIN
+         * instead of ABORT on mem>disk.
+         */
+        if (session->kernel->attr.enable_ubsmem && ctrl->disk_expect_lsn != 0) {
+            OG_LOG_RUN_ERR("[BUFFER][%u-%u]: mem>disk on load defer disk_expect local(%llu) disk(%llu) "
+                "expect(%llu)",
+                page_id.file, page_id.page, (uint64)lsn, (uint64)ctrl->page->lsn,
+                (uint64)ctrl->disk_expect_lsn);
+            return OG_SUCCESS;
+        }
+        knl_panic_log(0, "buf load page from disk lsn [%llu-%llu]", (uint64)lsn, (uint64)ctrl->page->lsn);
+    }
 
     return OG_SUCCESS;
 }
@@ -1160,6 +1181,21 @@ status_t buf_load_page(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_
             }
         }
         status = buf_load_page_from_disk(session, ctrl, page_id);
+    }
+
+    if (status == OG_SUCCESS && session->kernel->attr.enable_ubsmem && ctrl->disk_expect_lsn != 0) {
+        if (ctrl->page->lsn >= ctrl->disk_expect_lsn) {
+            ctrl->disk_expect_lsn = 0;
+        } else {
+            OG_LOG_RUN_ERR("[BUFFER][%u-%u]: disk older than eviction expect disk_lsn(%llu) disk_expect(%llu)",
+                page_id.file, page_id.page, (uint64)ctrl->page->lsn, (uint64)ctrl->disk_expect_lsn);
+            ctrl->page->lsn = 0;
+            AS_PAGID(ctrl->page->id) = INVALID_PAGID;
+            ctrl->load_status = (uint8)BUF_NEED_LOAD;
+            cm_reset_error();
+            OG_THROW_ERROR(ERR_GBP_MSG_EAGAIN, "disk page older than eviction lsn");
+            return OG_ERROR;
+        }
     }
 
     if (SECUREC_UNLIKELY(status == OG_SUCCESS && KNL_RECOVERY_WITH_RBP(session->kernel) &&

@@ -24,6 +24,7 @@
  */
 #include "knl_cluster_module.h"
 #include "dtc_dcs.h"
+#include "knl_ckpt.h"
 #include "cm_defs.h"
 #include "cm_thread.h"
 #include "knl_context.h"
@@ -231,6 +232,18 @@ static inline void dcs_get_page_from_gbp(knl_session_t *session, buf_ctrl_t *ctr
                           ctrl->page->lsn);
     }
 
+    /*
+     * Callers attach shmem pointers before this. If generation was not stamped
+     * (local CONVERTING_TO_GBP / IN_GBP), take meta so ctrl_gen matches publish;
+     * leaving 0 after owner 0→1 publish makes still_this_hot false-retire forever.
+     */
+    if (ctrl->shmem_page_meta != NULL) {
+        ctrl->is_in_gbp = OG_TRUE;
+        if (ctrl->gbp_slot_generation == 0) {
+            ctrl->gbp_slot_generation = ctrl->shmem_page_meta->generation;
+        }
+    }
+
     ctrl->lock_mode = req_mode;
     ctrl->is_fixed = 0;
     ctrl->force_request = 0;
@@ -291,6 +304,10 @@ static status_t dcs_handle_gbp_from_owner(knl_session_t *session, buf_ctrl_t *ct
 
     ctrl->shmem_page_addr = shmem_page_addr;
     ctrl->shmem_page_meta = shmem_page_meta;
+    ctrl->is_in_gbp = OG_TRUE;
+    /* Same rule as already_in_gbp / HOT_FIRST_COPY: prefer ack, else meta. */
+    ctrl->gbp_slot_generation = (ack->gbp_slot_generation != 0) ? ack->gbp_slot_generation :
+        shmem_page_meta->generation;
     dcs_get_page_from_gbp(session, ctrl, mode);
 
     if (ack->scn != 0) {
@@ -462,6 +479,60 @@ static inline void dcs_set_ctrl4granted(knl_session_t *session, buf_ctrl_t *ctrl
     DTC_DCS_DEBUG_INF("[DCS][%u-%u][dcs set ctrl4granted] success", ctrl->page_id.file, ctrl->page_id.page);
 }
 
+/*
+ * GBP-eviction-only post-grant apply.
+ * Gate: callers pass result/ack.evict_flush_lsn, which DRC sets non-zero ONLY when
+ * owner_changed_number == DRC_GBP_EVICT_RELOAD_MARK (stamped by invalidate after
+ * GBP slot eviction). Ordinary / non-GBP GRANTED keep evict_flush_lsn==0 and must
+ * never enter local-vs-evict / reuse / disk_expect logic here.
+ */
+static void dcs_gbp_apply_evict_flush_lsn(knl_session_t *session, buf_ctrl_t *ctrl, uint64 evict_flush_lsn)
+{
+    ckpt_context_t *ckpt = &session->kernel->ckpt_ctx;
+    uint64 local_lsn;
+
+    /* Non-GBP / ordinary grant: no-op. */
+    if (!session->kernel->attr.enable_ubsmem || evict_flush_lsn == 0) {
+        return;
+    }
+    local_lsn = ctrl->page != NULL ? (uint64)ctrl->page->lsn : 0ULL;
+
+    /* local > evict is protocol-broken for post-GBP-eviction grant. */
+    knl_panic_log(ctrl->page == NULL || local_lsn <= evict_flush_lsn,
+        "[DCS][%u-%u] local_lsn(%llu) > gbp_evict_flush_lsn(%llu)",
+        ctrl->page_id.file, ctrl->page_id.page, local_lsn, (uint64)evict_flush_lsn);
+
+    ctrl->shmem_page_meta = NULL;
+    ctrl->shmem_page_addr = NULL;
+    ctrl->gbp_slot_generation = 0;
+    ctrl->is_in_gbp = OG_FALSE;
+    ctrl->is_hot = OG_FALSE;
+
+    /* Drop residual dirty before NEED_LOAD or reuse (buf_load_page requires !dirty). */
+    if (ctrl->in_ckpt && (ctrl->is_dirty || ctrl->is_remote_dirty)) {
+        if (ckpt->batch_end == ctrl) {
+            ckpt->batch_end = ctrl->ckpt_prev;
+        }
+        ckpt_pop_page(session, ckpt, ctrl);
+    }
+    ctrl->is_dirty = 0;
+    ctrl->is_remote_dirty = 0;
+
+    if (ctrl->page != NULL && local_lsn == evict_flush_lsn) {
+        /* Same as durable GBP eviction floor: keep body, skip disk reload. */
+        knl_panic_log(CHECK_PAGE_PCN(ctrl->page),
+            "[DCS][%u-%u] reuse local after gbp evict but page pcn abnormal, type %u",
+            ctrl->page_id.file, ctrl->page_id.page, ctrl->page->type);
+        ctrl->disk_expect_lsn = 0;
+        ctrl->load_status = (uint8)BUF_IS_LOADED;
+    } else {
+        /* local < evict (or no page): reload from disk with expect floor. */
+        ctrl->disk_expect_lsn = evict_flush_lsn;
+        /* load_status stays BUF_NEED_LOAD from dcs_set_ctrl4granted. */
+    }
+    /* force_request stays 0 after set_ctrl4granted (design §3.2). */
+}
+
 static inline void dcs_set_ctrl4already_owner(knl_session_t *session, buf_ctrl_t *ctrl, drc_lock_mode_e req_mode,
                                               uint8 action)
 {
@@ -507,6 +578,11 @@ static inline status_t dcs_handle_ack_need_load(knl_session_t *session, mes_mess
     DB_SET_CURR_SCN(session, ack->scn);
 
     dcs_set_ctrl4granted(session, ctrl);
+    /* GBP eviction reload only when enable_ubsmem; ordinary need_load keeps evict_flush_lsn==0. */
+    if (session->kernel->attr.enable_ubsmem && msg->head->size >= sizeof(msg_pg_ack_ld_t) &&
+        ack->evict_flush_lsn != 0) {
+        dcs_gbp_apply_evict_flush_lsn(session, ctrl, ack->evict_flush_lsn);
+    }
 
     return OG_SUCCESS;
 }
@@ -541,8 +617,11 @@ static status_t dcs_handle_ack_need_check_gbp(knl_session_t *session, uint32 mas
     }
 
     ctrl->is_hot = OG_TRUE;
+    ctrl->is_in_gbp = OG_TRUE;
     ctrl->shmem_page_addr = shmem_page_addr;
     ctrl->shmem_page_meta = shmem_page_meta;
+    ctrl->gbp_slot_generation = (ack->gbp_slot_generation != 0) ? ack->gbp_slot_generation :
+        shmem_page_meta->generation;
 
     session->ub_page_req_kind = (uint8)UB_PAGE_REQ_HOT_FIRST_COPY; // UB-stats
 
@@ -643,6 +722,9 @@ static inline status_t dcs_handle_ack_already_in_gbp(knl_session_t *session, uin
         ctrl->load_status = BUF_LOAD_FAILED;
         return OG_ERROR;
     }
+    ctrl->is_in_gbp = OG_TRUE;
+    ctrl->gbp_slot_generation = (ack->gbp_slot_generation != 0) ? ack->gbp_slot_generation :
+        ctrl->shmem_page_meta->generation;
 
     session->ub_page_req_kind = (flags & MES_FLAG_GBP_PROMOTED) ? (uint8)UB_PAGE_REQ_COLD_PROMOTE // UB-stats
                                                                 : (uint8)UB_PAGE_REQ_HOT_FIRST_COPY; // UB-stats
@@ -1237,6 +1319,7 @@ static inline void dcs_prepare_page_ready_gbp_ack(knl_session_t *session, uint8 
     ask_page->head.flags = MES_FLAG_MOVED_TO_GBP | MES_FLAG_GBP_PROMOTED; // UB-stats
     ask_page->req_version = page_req->req_version;
     ask_page->gbp_owner_id = page_req->gbp_owner_id;
+    ask_page->gbp_slot_generation = page_req->gbp_slot_generation;
     ask_page->shmem_page_meta_off = page_req->shmem_page_meta_off;
 }
 
@@ -1388,12 +1471,20 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
 
     char *page_tail_lsn_addr = (char *)gbp_tail_ptr_from_page(shmem_page_addr, DEFAULT_PAGE_SIZE(session));
     uint64 page_tail_lsn = ctrl->page->lsn;
+    /* Baseline: under X lock, unconditionally publish the owner image into the slot.
+     * Keep generation across overwrite; 0 / UINT32_MAX mean unpublished — promote to 1. */
+    uint32 pub_gen = shmem_page_meta->generation;
+    if (pub_gen == 0 || pub_gen == UINT32_MAX) {
+        pub_gen = 1;
+    }
 
     remote_page_info_t master_shmem_page_meta = {0};
     master_shmem_page_meta.lock_ptr = lock_ptr;
     master_shmem_page_meta.file_id = page_req->page_id.file;
     master_shmem_page_meta.page_id = page_req->page_id.page;
     master_shmem_page_meta.head_lsn = ctrl->page->lsn;
+    master_shmem_page_meta.generation = pub_gen;
+    master_shmem_page_meta.is_hot = OG_FALSE;
     master_shmem_page_meta.xlog_owner_node = page_req->head.dst_inst;
     uint64 dst_timeline_id = drc_get_node_timeline_id(rsga, page_req->head.dst_inst);
     remote_page_info_set_timeline_id(&master_shmem_page_meta, dst_timeline_id);
@@ -1408,6 +1499,11 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
 
     err = memcpy_s(page_tail_lsn_addr, sizeof(uint64), &page_tail_lsn, sizeof(uint64));
     knl_securec_check(err);
+    shmem_page_meta->is_hot = OG_TRUE;
+    ctrl->gbp_slot_generation = shmem_page_meta->generation;
+    ctrl->is_in_gbp = OG_TRUE;
+    ask_page->gbp_slot_generation = shmem_page_meta->generation;
+    page_req->gbp_slot_generation = shmem_page_meta->generation;
 
     // Release global Lock
     OG_LOG_DEBUG_INF("[DCS-GBP][%u-%u]: Releasing exclusive lock after write", page_req->page_id.file,
@@ -1425,8 +1521,9 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
     }
 
     if (DCS_BUF_CTRL_IS_OWNER(session, ctrl)) {
-        // after the lbp-->gbp transfer is done, the local copy the this node(owner) should be invalidated
-        // TOODO: problem here: What if this page is dirty? Do we manually trigger a flush for it?
+        /* Invalidate local ownership after LBP→GBP publish. Do not attach shmem_page_meta here:
+         * is_in_gbp + meta==NULL (+ possible dirty) is promote leftover (dtc_buf_gbp_leftover case 1).
+         * TOODO: dirty local body — should we force a flush before leaving this state? */
         ctrl->lock_mode = DRC_LOCK_NULL;
         ctrl->load_status = BUF_LOAD_FAILED;
         ctrl->is_remote_dirty = 0;
@@ -1436,6 +1533,7 @@ static status_t dcs_owner_copy_page_to_gbp(knl_session_t *session, uint8 master_
         ctrl->transfer_status = BUF_TRANS_NONE;
     }
 
+    /* Promote leftover flag; mapping stays unset on this data ctrl (see leftover case 1). */
     ctrl->is_in_gbp = OG_TRUE;
     DTC_DCS_DEBUG(
         ret,
@@ -1630,6 +1728,9 @@ static status_t dcs_notify_owner_for_page_to_gbp(knl_session_t *session, uint8 o
                            page_req_to_owner.page_id.file, page_req_to_owner.page_id.page,
                            page_req_to_owner.head.src_inst, page_req_to_owner.head.src_sid, page_req_to_owner.head.rsn,
                            page_req_to_owner.req_mode);
+        } else {
+            /* owner_copy updated the local copy; sync publish gen back to caller's page_req. */
+            page_req->gbp_slot_generation = page_req_to_owner.gbp_slot_generation;
         }
         return ret;
     } else {
@@ -1700,7 +1801,7 @@ static status_t dcs_notify_owner_for_page(knl_session_t *session, uint8 owner_id
     return dcs_notify_owner_for_page_r(session, owner_id, page_req);
 }
 
-static inline void dcs_send_requester_granted(knl_session_t *session, msg_page_req_t *page_req)
+static inline void dcs_send_requester_granted(knl_session_t *session, msg_page_req_t *page_req, uint64 evict_flush_lsn)
 {
     // this page not in memory of other instance, notify requester to load from disk
     msg_pg_ack_ld_t ack;
@@ -1711,6 +1812,7 @@ static inline void dcs_send_requester_granted(knl_session_t *session, msg_page_r
     ack.master_lsn = DB_CURR_LSN(session);
     ack.scn = DB_CURR_SCN(session);
     ack.req_version = page_req->req_version;
+    ack.evict_flush_lsn = evict_flush_lsn;
 
     if (dcs_send_data_retry(&ack) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DCS]failed to send ack");
@@ -1770,6 +1872,7 @@ static inline void dcs_send_requester_get_page_from_gbp(knl_session_t *session, 
     ack_to_requester.lsn = DB_CURR_LSN(session);
     ack_to_requester.scn = DB_CURR_SCN(session);
     ack_to_requester.gbp_owner_id = DCS_SELF_INSTID(session);  // this function must run in master
+    ack_to_requester.gbp_slot_generation = p_meta->generation;
     ack_to_requester.shmem_page_meta_off = meta_off64;
 
     dcs_send_requester_gbp_addr(session, page_req, &ack_to_requester, OG_FALSE); // (already hot, no promotion) // UB-stats
@@ -1837,6 +1940,7 @@ static status_t dcs_prep_gbp_page_req(knl_session_t *session, drc_req_owner_resu
         return OG_ERROR;
     }
     page_req->shmem_page_meta_off = meta_off64;
+    page_req->gbp_slot_generation = result->gbp_buf_ctrl->gbp_slot_generation;
     return OG_SUCCESS;
 }
 
@@ -1855,6 +1959,28 @@ static void dcs_process_claim_page2hot_req(knl_session_t *session, msg_page_req_
                           page_req->page_id.file, page_req->page_id.page, req_version, DRC_GET_CURR_REFORM_VERSION);
         return;
     }
+    /*
+     * Claim must carry the post-publish slot generation. page_req often still holds the
+     * pre-publish 0 (owner_copy updates a local copy / ack, not the master's page_req).
+     * Prefer owner ack; if ack gen is 0, fall back to live meta after publish.
+     */
+    uint32 pub_gen = ack_msg_from_owner->gbp_slot_generation;
+    if (pub_gen == 0) {
+        pub_gen = page_req->gbp_slot_generation;
+    }
+    if (pub_gen == 0) {
+        remote_sga_t *rsga = &DRC_RES_CTX->remote_sga;
+        uint8 gbp_owner = ack_msg_from_owner->gbp_owner_id;
+        char *base = (gbp_owner < OG_MAX_INSTANCES) ? rsga->remote_buf_addr[gbp_owner] : NULL;
+        remote_page_info_t *meta = NULL;
+        page_head_t *addr = NULL;
+        if (base != NULL &&
+            gbp_resolve_from_meta_off(base, ack_msg_from_owner->shmem_page_meta_off, &meta, &addr) == OG_SUCCESS &&
+            meta != NULL) {
+            pub_gen = meta->generation;
+        }
+    }
+
     /* Build claim_info using GBP meta locator (owner + offset) */
     claim_info_t claim_info;
     claim_info.new_id = page_req->head.src_inst;
@@ -1864,7 +1990,10 @@ static void dcs_process_claim_page2hot_req(knl_session_t *session, msg_page_req_
     claim_info.mode = page_req->req_mode;
     claim_info.lsn = ack_msg_from_owner->lsn;
     claim_info.gbp_owner_id = ack_msg_from_owner->gbp_owner_id;
+    claim_info.gbp_slot_generation = pub_gen;
     claim_info.shmem_page_meta_off = ack_msg_from_owner->shmem_page_meta_off;
+    /* Keep master's page_req in sync for later gbp_buf_ctrl / requester ack paths. */
+    page_req->gbp_slot_generation = pub_gen;
 
     drc_claim_page_to_hot(session, &claim_info, req_version);
 }
@@ -1875,6 +2004,7 @@ static inline void dcs_init_requester_ack_from_owner_ack(const msg_ask_page_ack_
     ack_to_requester->req_version = ack_msg_from_owner->req_version;
     ack_to_requester->mode = ack_msg_from_owner->mode;
     ack_to_requester->gbp_owner_id = ack_msg_from_owner->gbp_owner_id;
+    ack_to_requester->gbp_slot_generation = ack_msg_from_owner->gbp_slot_generation;
     ack_to_requester->shmem_page_meta_off = ack_msg_from_owner->shmem_page_meta_off;
     ack_to_requester->head.flags = ack_msg_from_owner->head.flags;
     ack_to_requester->lsn = ack_msg_from_owner->lsn;
@@ -1899,6 +2029,7 @@ static status_t dcs_master_handle_page_ready_in_gbp(knl_session_t *session, msg_
     ack_to_requester->req_version = ack_msg_from_owner->req_version;
     ack_to_requester->mode = ack_msg_from_owner->mode;
     ack_to_requester->gbp_owner_id = ack_msg_from_owner->gbp_owner_id;
+    ack_to_requester->gbp_slot_generation = ack_msg_from_owner->gbp_slot_generation;
     ack_to_requester->shmem_page_meta_off = ack_msg_from_owner->shmem_page_meta_off;
     ack_to_requester->head.flags = ack_msg_from_owner->head.flags;
     ack_to_requester->lsn = ack_msg_from_owner->lsn;
@@ -1982,7 +2113,7 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
     page_id_t page_id = page_req.page_id;
     status_t ret = OG_FALSE;
     if (session->kernel->attr.enable_ubsmem && page_req.gbp_to_lbp == DRC_NEED_MOVE_TO_LBP) {
-        ret = drc_invalidate_shmem_page(session, page_req.page_id);
+        ret = drc_gbp_invalidate_shmem_page(session, page_req.page_id);
         if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
             OG_LOG_RUN_ERR(
                 "[DCS][%u-%u] failed to invalidate shmem page when processing gbp to lbp req, req_version=%llu,"
@@ -2043,7 +2174,7 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
     page_req.req_mode = result.req_mode;
     switch (result.type) {
         case DRC_REQ_OWNER_GRANTED:
-            dcs_send_requester_granted(session, &page_req);
+            dcs_send_requester_granted(session, &page_req, result.evict_flush_lsn);
             break;
 
         case DRC_REQ_OWNER_ALREADY_OWNER:
@@ -2083,6 +2214,7 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
             char *base = rsga->remote_buf_addr[page_req.gbp_owner_id];
             // IMPORTANT: result.gbp_buf_ctrl->shmem_page_* must point inside base region
             page_req.shmem_page_meta_off = (char *)result.gbp_buf_ctrl->shmem_page_meta - base;
+            page_req.gbp_slot_generation = result.gbp_buf_ctrl->gbp_slot_generation;
 
             // First step: This step only involves master and owner. Master ask owner to send the page to GBP
             knl_begin_session_wait(session, DCS_REQ_OWNER4PAGE_GBP, OG_TRUE);
@@ -2114,6 +2246,10 @@ void dcs_process_ask_master_for_page(void *sess, mes_message_t *receive_msg)
                                (uint32)owner_is_master, session->id);
                 remote_buf_release_gbp_alloc_failed(session, result.gbp_buf_ctrl);
                 break;
+            }
+            /* Alloc may have stamped gen=0 before first publish; sync after owner copy. */
+            if (result.gbp_buf_ctrl->shmem_page_meta != NULL) {
+                result.gbp_buf_ctrl->gbp_slot_generation = result.gbp_buf_ctrl->shmem_page_meta->generation;
             }
             remote_buf_release_gbp_alloc_success(session, result.gbp_buf_ctrl);
             dcs_send_requester_gbp_addr(session, &page_req, &ack_to_requester, OG_TRUE); // (promoted during this request) // UB-stats
@@ -2403,7 +2539,7 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
     status_t ret = OG_ERROR;
 
     if (session->kernel->attr.enable_ubsmem && gbp_to_lbp == DRC_NEED_MOVE_TO_LBP) {
-        ret = drc_invalidate_shmem_page(session, page_id);
+        ret = drc_gbp_invalidate_shmem_page(session, page_id);
         if (SECUREC_UNLIKELY(ret != OG_SUCCESS)) {
             OG_LOG_RUN_ERR("[DCS][%u-%u]failed to invalidate shmem page for gbp to lbp, page_id=%u-%u", page_id.file,
                            page_id.page, page_id.file, page_id.page);
@@ -2453,6 +2589,10 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
         case DRC_REQ_OWNER_GRANTED: {
             knl_panic(result.action == DRC_RES_INVALID_ACTION);
             dcs_set_ctrl4granted(session, ctrl);
+            /* enable_ubsmem + non-zero only after GBP slot eviction (DRC_GBP_EVICT_RELOAD_MARK). */
+            if (session->kernel->attr.enable_ubsmem && result.evict_flush_lsn != 0) {
+                dcs_gbp_apply_evict_flush_lsn(session, ctrl, result.evict_flush_lsn);
+            }
 
             knl_end_session_wait(session, DCS_REQ_MASTER4PAGE_1WAY);
             DTC_DCS_DEBUG_INF("[DCS][%u-%u][ask master local]: granted, src_id=%u, dest_id=%u, "
@@ -2537,6 +2677,10 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
                 remote_buf_release_gbp_alloc_failed(session, result.gbp_buf_ctrl);
                 return ret;
             }
+            /* Alloc may have stamped gen=0 before first publish; sync after owner copy. */
+            if (result.gbp_buf_ctrl->shmem_page_meta != NULL) {
+                result.gbp_buf_ctrl->gbp_slot_generation = result.gbp_buf_ctrl->shmem_page_meta->generation;
+            }
             remote_buf_release_gbp_alloc_success(session, result.gbp_buf_ctrl);
             ack_to_requester.head.cmd = MES_CMD_PAGE_READY;  // MES_CMD_PAGE_READY is correct here, because we are
                                                              // sending this ack to requester from Master. So PAGE_READY
@@ -2556,6 +2700,8 @@ static status_t dcs_ask_master4page_l(knl_session_t *session, buf_ctrl_t *ctrl, 
                     result.shmem_page_addr);
                 return OG_ERROR;
             }
+            ctrl->is_in_gbp = OG_TRUE;
+            ctrl->gbp_slot_generation = ctrl->shmem_page_meta->generation;
             dcs_get_page_from_gbp(session, ctrl, result.req_mode);
             session->ub_page_req_kind = (uint8)UB_PAGE_REQ_HOT_FIRST_COPY; // (page was already hot in GBP before this request, no promotion) // UB-stats
             knl_end_session_wait_ex(session, DCS_REQ_MASTER4PAGE_1WAY, DCS_REQ_OWNER4PAGE);
@@ -2710,6 +2856,9 @@ status_t dcs_try_get_page_exclusive_owner(knl_session_t *session, buf_ctrl_t **c
             case DRC_REQ_OWNER_GRANTED: {
                 knl_panic(result[i].action == DRC_RES_INVALID_ACTION);
                 dcs_set_ctrl4granted(session, ctrl_array[i]);
+                if (session->kernel->attr.enable_ubsmem && result[i].evict_flush_lsn != 0) {
+                    dcs_gbp_apply_evict_flush_lsn(session, ctrl_array[i], result[i].evict_flush_lsn);
+                }
                 page_ids[i] = INVALID_PAGID;
                 break;
             }
@@ -3055,13 +3204,14 @@ status_t dcs_clean_edp(knl_session_t *session, ckpt_context_t *ogx)
 }
 
 static inline status_t dcs_request_edpinfo_r(knl_session_t *session, uint8 master_id, page_id_t page_id,
-                                             drc_edp_info_t *edp_info)
+                                             drc_edp_info_t *edp_info, uint64 raise_lsn)
 {
     msg_edpinfo_req_t req;
 
     mes_init_send_head(&req.head, MES_CMD_EDPINFO_REQ, sizeof(msg_edpinfo_req_t), OG_INVALID_ID32,
-                       DCS_SELF_INSTID(session), 0, DCS_SELF_SID(session), OG_INVALID_ID16);
+                       DCS_SELF_INSTID(session), master_id, DCS_SELF_SID(session), OG_INVALID_ID16);
     req.page_id = page_id;
+    req.raise_lsn = raise_lsn;
 
     status_t ret = mes_send_data((void *)&req);
 
@@ -3102,10 +3252,67 @@ status_t dcs_request_edpinfo(knl_session_t *session, page_id_t page_id, drc_edp_
     }
 
     if (master_id != DCS_SELF_INSTID(session)) {
-        return dcs_request_edpinfo_r(session, master_id, page_id, edp_info);
+        return dcs_request_edpinfo_r(session, master_id, page_id, edp_info, 0);
     }
 
     return drc_get_edp_info(page_id, edp_info);
+}
+
+status_t dcs_gbp_get_page_ckpt_guard(knl_session_t *session, page_id_t page_id, uint64 *barrier_lsn, bool32 *is_in_gbp)
+{
+    uint8 master_id = OG_INVALID_ID8;
+    drc_edp_info_t edp_info;
+
+    if (barrier_lsn != NULL) {
+        *barrier_lsn = 0;
+    }
+    if (is_in_gbp != NULL) {
+        *is_in_gbp = OG_FALSE;
+    }
+    /* GBP ckpt barrier / is_in_gbp are meaningful only with enable_ubsmem. */
+    if (session == NULL || !DB_IS_CLUSTER(session) || !session->kernel->attr.enable_ubsmem) {
+        return OG_SUCCESS;
+    }
+    if (drc_get_page_master_id(page_id, &master_id) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (master_id == DCS_SELF_INSTID(session)) {
+        drc_gbp_get_page_ckpt_guard(page_id, barrier_lsn, is_in_gbp);
+        return OG_SUCCESS;
+    }
+    if (dcs_request_edpinfo(session, page_id, &edp_info) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (barrier_lsn != NULL) {
+        *barrier_lsn = edp_info.lsn;
+    }
+    if (is_in_gbp != NULL) {
+        *is_in_gbp = (bool32)edp_info.is_in_gbp;
+    }
+    return OG_SUCCESS;
+}
+
+status_t dcs_gbp_get_page_barrier_lsn(knl_session_t *session, page_id_t page_id, uint64 *barrier_lsn)
+{
+    return dcs_gbp_get_page_ckpt_guard(session, page_id, barrier_lsn, NULL);
+}
+
+status_t dcs_gbp_raise_page_barrier_lsn(knl_session_t *session, page_id_t page_id, uint64 lsn)
+{
+    uint8 master_id = OG_INVALID_ID8;
+    drc_edp_info_t edp_info;
+
+    if (session == NULL || !DB_IS_CLUSTER(session) || lsn == 0) {
+        return OG_SUCCESS;
+    }
+    if (drc_get_page_master_id(page_id, &master_id) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (master_id == DCS_SELF_INSTID(session)) {
+        drc_gbp_raise_buf_res_lsn(page_id, lsn);
+        return OG_SUCCESS;
+    }
+    return dcs_request_edpinfo_r(session, master_id, page_id, &edp_info, lsn);
 }
 
 void dcs_process_notify_master_clean_edp_req(void *sess, mes_message_t *receive_msg)
@@ -3201,6 +3408,10 @@ void dcs_process_edpinfo_req(void *sess, mes_message_t *receive_msg)
     DTC_DCS_DEBUG_INF("[DCS][%u-%u][%s]: src_id=%u, src_sid=%u, dest_id=%u, dest_sid=%u", page_id.file, page_id.page,
                       MES_CMD2NAME(req->head.cmd), req->head.src_inst, req->head.src_sid, req->head.dst_inst,
                       req->head.dst_sid);
+
+    if (req->raise_lsn != 0) {
+        drc_gbp_raise_buf_res_lsn(page_id, req->raise_lsn);
+    }
 
     msg_edpinfo_ack_t ack;
     status_t ret = drc_get_edp_info(page_id, &ack.edp_info);

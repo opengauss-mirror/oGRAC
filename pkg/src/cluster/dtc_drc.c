@@ -27,12 +27,14 @@
 #include "dtc_drc.h"
 #include "dtc_context.h"
 #include "knl_buflatch.h"
+#include "knl_remote_buffer.h"
 #include "mes_func.h"
 #include "dtc_dcs.h"
 #include "dtc_ckpt.h"
 #include "dtc_trace.h"
 #include "dtc_drc_stat.h"
 #include "cm_malloc.h"
+#include "cm_memory.h"
 #include "cm_date.h"
 #include "rc_reform.h"
 #include "knl_cluster_module.h"
@@ -677,6 +679,73 @@ drc_buf_res_t *drc_get_buf_res_by_pageid(knl_session_t *session, page_id_t pagid
     cm_spin_unlock(&bucket->lock);
 
     return buf_res;
+}
+
+uint64 drc_gbp_get_buf_res_lsn(page_id_t pagid)
+{
+    drc_res_ctx_t *ogx = DRC_RES_CTX;
+    drc_res_bucket_t *bucket;
+    drc_buf_res_t *buf_res;
+    uint64 lsn = 0;
+
+    if (ogx == NULL) {
+        return 0;
+    }
+    bucket = drc_get_buf_map_bucket(&ogx->global_buf_res.res_map, pagid.file, pagid.page);
+    cm_spin_lock(&bucket->lock, NULL);
+    buf_res = (drc_buf_res_t *)drc_res_map_lookup(&ogx->global_buf_res.res_map, bucket, (char *)&pagid);
+    if (buf_res != NULL) {
+        lsn = buf_res->lsn;
+    }
+    cm_spin_unlock(&bucket->lock);
+    return lsn;
+}
+
+void drc_gbp_raise_buf_res_lsn(page_id_t pagid, uint64 lsn)
+{
+    drc_res_ctx_t *ogx = DRC_RES_CTX;
+    drc_res_bucket_t *bucket;
+    drc_buf_res_t *buf_res;
+
+    if (ogx == NULL || lsn == 0) {
+        return;
+    }
+    bucket = drc_get_buf_map_bucket(&ogx->global_buf_res.res_map, pagid.file, pagid.page);
+    cm_spin_lock(&bucket->lock, NULL);
+    buf_res = (drc_buf_res_t *)drc_res_map_lookup(&ogx->global_buf_res.res_map, bucket, (char *)&pagid);
+    if (buf_res != NULL && lsn > buf_res->lsn) {
+        buf_res->lsn = lsn;
+    }
+    cm_spin_unlock(&bucket->lock);
+}
+
+void drc_gbp_get_page_ckpt_guard(page_id_t pagid, uint64 *barrier_lsn, bool32 *is_in_gbp)
+{
+    drc_res_ctx_t *ogx = DRC_RES_CTX;
+    drc_res_bucket_t *bucket;
+    drc_buf_res_t *buf_res;
+
+    if (barrier_lsn != NULL) {
+        *barrier_lsn = 0;
+    }
+    if (is_in_gbp != NULL) {
+        *is_in_gbp = OG_FALSE;
+    }
+    if (ogx == NULL || ogx->kernel == NULL || !ogx->kernel->attr.enable_ubsmem) {
+        return;
+    }
+    bucket = drc_get_buf_map_bucket(&ogx->global_buf_res.res_map, pagid.file, pagid.page);
+    cm_spin_lock(&bucket->lock, NULL);
+    buf_res = (drc_buf_res_t *)drc_res_map_lookup(&ogx->global_buf_res.res_map, bucket, (char *)&pagid);
+    if (buf_res != NULL) {
+        if (barrier_lsn != NULL) {
+            *barrier_lsn = buf_res->lsn;
+        }
+        if (is_in_gbp != NULL) {
+            *is_in_gbp = (bool32)buf_res->page_hot_stat.is_in_gbp;
+        }
+    }
+    cm_spin_unlock(&bucket->lock);
 }
 
 static void drc_clean_buf_res(drc_buf_res_t *buf_res)
@@ -1655,12 +1724,16 @@ static status_t drc_keep_requester_wait(page_id_t pagid, drc_req_info_t *req_inf
     return OG_SUCCESS;
 }
 
+/* owner_changed_number sentinel: next GRANTED must carry evict_flush_lsn (post GBP eviction only). */
+#define DRC_GBP_EVICT_RELOAD_MARK UINT32_MAX
+
 static void inline reset_page_hot_stat(knl_session_t *session, drc_buf_res_t *buf_res)
 {
     buf_res->page_hot_stat.start_time = KNL_NOW(session);
     buf_res->page_hot_stat.owner_changed_number = 0;
     buf_res->page_hot_stat.is_in_gbp = OG_FALSE;
     buf_res->page_hot_stat.shmem_page_addr = NULL;
+    buf_res->page_hot_stat.shmem_page_meta = NULL;
 }
 
 // Request page owner in master's drc_ctx and update the page owner conversion count.
@@ -1686,6 +1759,7 @@ status_t drc_request_page_owner(knl_session_t *session, page_id_t pagid, drc_req
     result->gbp_action = DRC_NEED_NO_MOVE;
     result->gbp_buf_ctrl = NULL;
     result->shmem_page_addr = NULL;
+    result->evict_flush_lsn = 0;
     req_info->req_owner_result = DRC_REQ_OWNER_WAITING;
 
     if (req_info->inst_id >= OG_MAX_INSTANCES || IS_INVALID_PAGID(pagid)) {
@@ -1823,6 +1897,7 @@ status_t drc_request_page_owner(knl_session_t *session, page_id_t pagid, drc_req
         result->type = DRC_REQ_OWNER_GRANTED;
         result->curr_owner_id = req_info->inst_id;
         result->readonly_copies = 0;
+        result->evict_flush_lsn = 0;
 
         DTC_DRC_DEBUG_INF("[DRC][%u-%u][req owner converting]:  buf_res null, req_id=%u, req_sid=%u, req_rsn=%u, "
                           "req_mode=%u, curr_mode=%u, req_version=%llu, cur_version=%llu",
@@ -1902,6 +1977,16 @@ allocated:
     }
     /* Case C: Claim ownership directly if it's currently unowned */
     if (buf_res->claimed_owner == OG_INVALID_ID8) {
+        /*
+         * evict_flush_lsn only when enable_ubsmem and after GBP eviction
+         * (invalidate stamps EVICT_RELOAD_MARK). Ordinary unowned grants keep 0.
+         */
+        uint64 evict_flush_lsn = 0;
+        if (session->kernel->attr.enable_ubsmem &&
+            buf_res->page_hot_stat.owner_changed_number == DRC_GBP_EVICT_RELOAD_MARK) {
+            evict_flush_lsn = buf_res->lsn;
+        }
+
         buf_res->claimed_owner = req_info->inst_id;
         buf_res->mode = req_info->req_mode;
 
@@ -1910,6 +1995,7 @@ allocated:
 
         result->type = DRC_REQ_OWNER_GRANTED;
         result->curr_owner_id = req_info->inst_id;
+        result->evict_flush_lsn = evict_flush_lsn;
         buf_res->converting.req_info.req_owner_result = result->type;
         CM_ASSERT(buf_res->readonly_copies == 0);
 
@@ -2017,35 +2103,27 @@ allocated:
             // reset stats when unit time is reached
             // reset_page_hot_stat(session, buf_res); Correct location of reset is here. Temporarily disabled for now
             if (result->gbp_action == DRC_NEED_MOVE_TO_GBP) {
-                result->type = DRC_REQ_OWNER_CONVERTING_TO_GBP;
                 /*
-                 * Find a slot in GBP.
-                 * We only need to allocate a buf_res_t here; the page_buf structures
-                 * have already been initialized, so no additional mmap is needed.
-                 *
-                 * TOODO: Should we wait here until a slot becomes available in the
-                 * global buffer pool instead of spinning?
-                 *
-                 * TOODO: Does using ENTER_PAGE_NORMAL have any side effects here?
-                 * It is a uint8 bitmask and all bits are already in use, so I cannot
-                 * define an additional flag specifically for the GBP case.
+                 * Try one bounded GBP alloc. If the pool has no reusable/evictable slot yet
+                 * (e.g. many pages wait on ckpt), skip migrate and keep ordinary CONVERTING —
+                 * never spin while(NULL) on master (MES/TMS starvation).
                  */
-                buf_ctrl_t *gbp_buf_ctrl = NULL;
-                while (gbp_buf_ctrl == NULL) {
-                    gbp_buf_ctrl = buf_alloc_ctrl(session, pagid, req_info->req_mode, ENTER_PAGE_NORMAL, OG_TRUE);
+                buf_ctrl_t *gbp_buf_ctrl =
+                    buf_alloc_ctrl(session, pagid, req_info->req_mode, ENTER_PAGE_GBP_TRY, OG_TRUE);
+                if (gbp_buf_ctrl == NULL) {
+                    result->gbp_action = DRC_NEED_NO_MOVE;
+                    result->gbp_buf_ctrl = NULL;
+                    /* result->type stays DRC_REQ_OWNER_CONVERTING from above. */
+                    reset_page_hot_stat(session, buf_res);
+                } else {
+                    result->type = DRC_REQ_OWNER_CONVERTING_TO_GBP;
+                    result->gbp_buf_ctrl = gbp_buf_ctrl;
+                    reset_page_hot_stat(session, buf_res);
+                    DTC_DRC_DEBUG_INF("[DRC-GBP][%u-%u][1.req owner converting to gbp]: allocated gbp buf ctrl=%p,"
+                                      "shmem_page_addr=%p, shmem_page_meta=%p, gen=%u",
+                                      pagid.file, pagid.page, (void *)gbp_buf_ctrl, gbp_buf_ctrl->shmem_page_addr,
+                                      gbp_buf_ctrl->shmem_page_meta, gbp_buf_ctrl->gbp_slot_generation);
                 }
-                result->gbp_buf_ctrl = gbp_buf_ctrl;
-
-                DTC_DRC_DEBUG_INF("[DRC-GBP][%u-%u][1.req owner converting to gbp]: allocated gbp buf ctrl=%p,"
-                                  "shmem_page_addr=%p, shmem_page_meta=%p",
-                                  pagid.file, pagid.page, (void *)gbp_buf_ctrl, gbp_buf_ctrl->shmem_page_addr,
-                                  gbp_buf_ctrl->shmem_page_meta);
-
-                // reset stats when unit time is reached, for debug only
-                reset_page_hot_stat(session, buf_res);
-                DTC_DRC_DEBUG_INF("[DRC-GBP][%u-%u][req owner converting to gbp]: reset hot stat after allocation,"
-                                  "req_id=%u, req_sid=%u, req_rsn=%u",
-                                  pagid.file, pagid.page, req_info->inst_id, req_info->inst_sid, req_info->rsn);
             }
         }
     }
@@ -2068,14 +2146,22 @@ status_t drc_get_edp_info(page_id_t pagid, drc_edp_info_t *edp_info)
     buf_res = (drc_buf_res_t *)drc_res_map_lookup(&ogx->global_buf_res.res_map, bucket, (char *)&pagid);
     if (NULL == buf_res) {
         cm_spin_unlock(&bucket->lock);
-        OG_LOG_RUN_ERR("[DRC][%u-%u][clean edp]: failed to find edp info on master", pagid.file, pagid.page);
-        return OG_ERROR;
+        /* No directory entry: barrier/edp view is empty (lsn 0), not a hard error. */
+        edp_info->edp_map = 0;
+        edp_info->latest_edp = OG_INVALID_ID8;
+        edp_info->readonly_copies = 0;
+        edp_info->lsn = 0;
+        edp_info->is_in_gbp = OG_FALSE;
+        return OG_SUCCESS;
     }
 
     edp_info->edp_map = buf_res->edp_map;
     edp_info->latest_edp = buf_res->latest_edp;
     edp_info->readonly_copies = buf_res->readonly_copies;
     edp_info->lsn = buf_res->lsn;
+    /* is_in_gbp is a GBP/UB field; keep false when enable_ubsmem is off. */
+    edp_info->is_in_gbp = (ogx->kernel != NULL && ogx->kernel->attr.enable_ubsmem) ?
+        buf_res->page_hot_stat.is_in_gbp : OG_FALSE;
 
     cm_spin_unlock(&bucket->lock);
 
@@ -2153,6 +2239,12 @@ void drc_claim_page_to_hot(knl_session_t *session, claim_info_t *claim_info, uin
     uint64 lock_ptr = shmem_page_meta->lock_ptr;
     drc_gbp_distribute_lock(session, lock_ptr, page_id, LATCH_MODE_X);
 
+    if (shmem_page_meta->generation != claim_info->gbp_slot_generation ||
+        shmem_page_meta->file_id != page_id.file || shmem_page_meta->page_id != page_id.page) {
+        drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
+        return;
+    }
+
     DTC_DRC_DEBUG_INF("[DRC][%u-%u][claim owner]: new_id=%u, has_edp=%u, req mode=%d, page lsn=%llu", page_id.file,
                       page_id.page, claim_info->new_id, claim_info->has_edp, claim_info->mode, claim_info->lsn);
 
@@ -2205,6 +2297,125 @@ void drc_claim_page_to_hot(knl_session_t *session, claim_info_t *claim_info, uin
 
     cm_spin_unlock(&bucket->lock);
     cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
+}
+
+static bool32 drc_gbp_body_complete(remote_page_info_t *meta, page_head_t *page, page_id_t page_id, uint32 generation,
+    uint32 page_size)
+{
+    uint64 tail;
+
+    if (meta == NULL || page == NULL || generation == 0 || generation == UINT32_MAX) {
+        return OG_FALSE;
+    }
+    if (meta->generation != generation || meta->file_id != page_id.file || meta->page_id != page_id.page) {
+        return OG_FALSE;
+    }
+    if (meta->head_lsn == 0) {
+        return OG_FALSE;
+    }
+    tail = *gbp_tail_ptr_from_page(page, page_size);
+    if (meta->head_lsn != tail || !IS_SAME_PAGID(page_id, AS_PAGID(page->id)) || !CHECK_PAGE_PCN(page)) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+}
+
+static void drc_retire_open_reservation(remote_page_info_t *meta, page_head_t *page, uint32 page_size,
+    page_id_t want_page)
+{
+    uint64 lock_ptr = meta->lock_ptr;
+    uint32 generation = meta->generation;
+
+    (void)want_page;
+    meta->is_hot = OG_FALSE;
+    CM_MFENCE;
+    if (page != NULL) {
+        *gbp_tail_ptr_from_page(page, page_size) = 0;
+    }
+    meta->file_id = OG_INVALID_ID16;
+    meta->page_id = OG_INVALID_ID32;
+    meta->head_lsn = 0;
+    gbp_ckpt_set_state(meta, 0);
+    meta->claimed_owner = OG_INVALID_ID8;
+    meta->lock_ptr = lock_ptr;
+    meta->generation = generation;
+    meta->is_hot = OG_FALSE;
+}
+
+static void drc_claim_written_slot(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id, uint32 generation,
+    uint64 head_lsn)
+{
+    drc_res_ctx_t *ogx = DRC_RES_CTX;
+    drc_global_res_t *g_buf_res = &(ogx->global_buf_res);
+    drc_res_bucket_t *bucket = drc_get_buf_map_bucket(&g_buf_res->res_map, page_id.file, page_id.page);
+    uint32 part_id = drc_page_partid(page_id);
+    claim_info_t claim_info;
+    drc_req_info_t converting;
+    char *base = NULL;
+    errno_t err;
+
+    cm_spin_lock(&g_buf_res->res_part_stat_lock[part_id], NULL);
+    cm_spin_lock(&bucket->lock, NULL);
+    drc_buf_res_t *buf_res = (drc_buf_res_t *)drc_res_map_lookup(&g_buf_res->res_map, bucket, (char *)&page_id);
+    if (buf_res == NULL || buf_res->converting.req_info.inst_id == OG_INVALID_ID8) {
+        cm_spin_unlock(&bucket->lock);
+        cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
+        return;
+    }
+    converting = buf_res->converting.req_info;
+    cm_spin_unlock(&bucket->lock);
+    cm_spin_unlock(&g_buf_res->res_part_stat_lock[part_id]);
+
+    err = memset_s(&claim_info, sizeof(claim_info), 0, sizeof(claim_info));
+    knl_securec_check(err);
+    claim_info.new_id = converting.inst_id;
+    claim_info.inst_sid = converting.inst_sid;
+    claim_info.page_id = page_id;
+    claim_info.mode = converting.req_mode;
+    claim_info.lsn = head_lsn;
+    claim_info.gbp_owner_id = DCS_SELF_INSTID(session);
+    claim_info.gbp_slot_generation = generation;
+    base = ogx->remote_sga.remote_buf_addr[claim_info.gbp_owner_id];
+    if (base == NULL || ctrl->shmem_page_meta == NULL) {
+        return;
+    }
+    claim_info.shmem_page_meta_off = (uint64)((char *)ctrl->shmem_page_meta - base);
+    drc_claim_page_to_hot(session, &claim_info, converting.req_version);
+}
+
+void drc_finish_or_retire_gbp_slot(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    remote_page_info_t *meta = NULL;
+    page_id_t page_id;
+    uint32 generation;
+    uint32 page_size;
+    uint64 lock_ptr;
+    uint64 head_lsn;
+
+    if (session == NULL || ctrl == NULL || !session->kernel->attr.enable_ubsmem || ctrl->shmem_page_meta == NULL) {
+        return;
+    }
+    meta = ctrl->shmem_page_meta;
+    page_id = ctrl->page_id;
+    generation = ctrl->gbp_slot_generation;
+    page_size = DEFAULT_PAGE_SIZE(session);
+    lock_ptr = meta->lock_ptr;
+    if (drc_gbp_distribute_lock(session, lock_ptr, page_id, LATCH_MODE_X) != OG_SUCCESS) {
+        return;
+    }
+    if (drc_gbp_body_complete(meta, ctrl->shmem_page_addr, page_id, generation, page_size)) {
+        head_lsn = meta->head_lsn;
+        meta->is_hot = OG_TRUE;
+        (void)drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
+        drc_claim_written_slot(session, ctrl, page_id, generation, head_lsn);
+        return;
+    }
+    if (generation != 0 && meta->generation == generation && meta->is_hot == OG_FALSE &&
+        meta->file_id == page_id.file && meta->page_id == page_id.page) {
+        drc_retire_open_reservation(meta, ctrl->shmem_page_addr, page_size, page_id);
+        ctrl->gbp_slot_generation = 0;
+    }
+    (void)drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
 }
 
 void drc_claim_page_owner(knl_session_t *session, claim_info_t *claim_info, cvt_info_t *cvt_info, uint64 req_version)
@@ -8001,7 +8212,7 @@ void drc_invalidate_datafile_buf_res(knl_session_t *session, uint32 file_id)
     }
 }
 
-status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t page_id)
+status_t drc_gbp_invalidate_shmem_page(knl_session_t *session, page_id_t page_id)
 {
     if (SECUREC_UNLIKELY(IS_INVALID_PAGID(page_id))) {
         OG_LOG_RUN_ERR("invalid param page_file: %d", page_id.file);
@@ -8014,15 +8225,18 @@ status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t page_id)
         return OG_ERROR;
     }
 
-    return drc_invalidate_shmem_page_by_ctrl(session, shmem_ctrl, OG_FALSE);
+    return drc_gbp_invalidate_shmem_page_by_ctrl(session, shmem_ctrl, OG_FALSE);
 }
 
-status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl, bool32 list_locked)
+status_t drc_gbp_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl, bool32 list_locked)
 {
     page_id_t page_id = shmem_ctrl->page_id;
     drc_res_ctx_t *ogx = DRC_RES_CTX;
     drc_global_res_t *g_buf_res = &(ogx->global_buf_res);
 
+    if (session == NULL || !session->kernel->attr.enable_ubsmem) {
+        return OG_ERROR;
+    }
     if (SECUREC_UNLIKELY(IS_INVALID_PAGID(page_id))) {
         OG_LOG_RUN_ERR("invalid param page_file: %d", page_id.file);
         return OG_ERROR;
@@ -8080,7 +8294,7 @@ status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *s
     // we should first check if the page evict is successful, then edit the global metadata.
     // Else the global state would be incorrect if we fail to evict the shmem
     remote_page_info_t out_shmem_page_meta;
-    if (buf_shmem_evict(session, shmem_ctrl, &out_shmem_page_meta, list_locked) != OG_SUCCESS) {
+    if (buf_gbp_shmem_evict(session, shmem_ctrl, &out_shmem_page_meta, list_locked) != OG_SUCCESS) {
         drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
         cm_spin_unlock(&bucket->lock);
         cm_spin_unlock(&ogx->global_buf_res.res_part_stat_lock[part_id]);
@@ -8088,12 +8302,17 @@ status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *s
         return OG_ERROR;
     }
     drc_gbp_distribute_unlock(session, lock_ptr, page_id, LATCH_MODE_X);
-    reset_page_hot_stat(session, buf_res);  // set the buf_res to cold now
-    // buf_res has the last valid copy by last writer of the remote page
-    buf_res->claimed_owner = out_shmem_page_meta.claimed_owner;
+    reset_page_hot_stat(session, buf_res);
+    buf_res->claimed_owner = OG_INVALID_ID8;
+    buf_res->mode = DRC_LOCK_NULL;
     buf_res->lsn = out_shmem_page_meta.head_lsn;
-    buf_res->mode = DRC_LOCK_EXCLUSIVE;
-    buf_res->pending = DRC_RES_INVALID_ACTION;  // recylce is completed
+    /* Next GRANTED must apply evict_flush_lsn; ordinary grants must not see leftover lsn. */
+    buf_res->page_hot_stat.owner_changed_number = DRC_GBP_EVICT_RELOAD_MARK;
+    buf_res->readonly_copies = 0;
+    buf_res->edp_map = 0;
+    buf_res->latest_edp = OG_INVALID_ID8;
+    buf_res->latest_edp_lsn = 0;
+    buf_res->pending = DRC_RES_INVALID_ACTION;
     DRC_MASTER_INFO_STAT(R_PO_CONVETED)++;      // we converted the owner, so count it once here
 
     cm_spin_unlock(&bucket->lock);

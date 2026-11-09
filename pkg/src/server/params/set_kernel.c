@@ -2009,6 +2009,80 @@ status_t sql_notify_als_ub_page_hot_timeout(void *se, void *item, char *value)
     return OG_SUCCESS;
 }
 
+status_t sql_verify_als_gbp_recycle_scan_budget(void *se, void *lex, void *def)
+{
+    uint32 num = 0;
+
+    if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (num < OG_MIN_GBP_RECYCLE_SCAN_BUDGET) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_GBP_RECYCLE_SCAN_BUDGET", (int64)OG_MIN_GBP_RECYCLE_SCAN_BUDGET);
+        return OG_ERROR;
+    }
+    if (num > OG_MAX_GBP_RECYCLE_SCAN_BUDGET) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_GBP_RECYCLE_SCAN_BUDGET", (int64)OG_MAX_GBP_RECYCLE_SCAN_BUDGET);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+status_t sql_notify_als_gbp_recycle_scan_budget(void *se, void *item, char *value)
+{
+    uint32 num = 0;
+
+    OG_RETURN_IFERR(cm_str2uint32(value, &num));
+    if (num < OG_MIN_GBP_RECYCLE_SCAN_BUDGET) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_GBP_RECYCLE_SCAN_BUDGET", (int64)OG_MIN_GBP_RECYCLE_SCAN_BUDGET);
+        return OG_ERROR;
+    }
+    if (num > OG_MAX_GBP_RECYCLE_SCAN_BUDGET) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_GBP_RECYCLE_SCAN_BUDGET", (int64)OG_MAX_GBP_RECYCLE_SCAN_BUDGET);
+        return OG_ERROR;
+    }
+    g_instance->kernel.attr.gbp_recycle_scan_budget = num;
+    return OG_SUCCESS;
+}
+
+status_t sql_verify_als_gbp_recycle_need_ckpt_early(void *se, void *lex, void *def)
+{
+    uint32 num = 0;
+
+    if (sql_verify_uint32(lex, def, &num) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+    if (num < OG_MIN_GBP_RECYCLE_NEED_CKPT_EARLY) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_GBP_RECYCLE_NEED_CKPT_EARLY",
+            (int64)OG_MIN_GBP_RECYCLE_NEED_CKPT_EARLY);
+        return OG_ERROR;
+    }
+    if (num > OG_MAX_GBP_RECYCLE_NEED_CKPT_EARLY) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_GBP_RECYCLE_NEED_CKPT_EARLY",
+            (int64)OG_MAX_GBP_RECYCLE_NEED_CKPT_EARLY);
+        return OG_ERROR;
+    }
+    return OG_SUCCESS;
+}
+
+status_t sql_notify_als_gbp_recycle_need_ckpt_early(void *se, void *item, char *value)
+{
+    uint32 num = 0;
+
+    OG_RETURN_IFERR(cm_str2uint32(value, &num));
+    if (num < OG_MIN_GBP_RECYCLE_NEED_CKPT_EARLY) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_GBP_RECYCLE_NEED_CKPT_EARLY",
+            (int64)OG_MIN_GBP_RECYCLE_NEED_CKPT_EARLY);
+        return OG_ERROR;
+    }
+    if (num > OG_MAX_GBP_RECYCLE_NEED_CKPT_EARLY) {
+        OG_THROW_ERROR(ERR_PARAMETER_TOO_LARGE, "_GBP_RECYCLE_NEED_CKPT_EARLY",
+            (int64)OG_MAX_GBP_RECYCLE_NEED_CKPT_EARLY);
+        return OG_ERROR;
+    }
+    g_instance->kernel.attr.gbp_recycle_need_ckpt_early = num;
+    return OG_SUCCESS;
+}
+
 status_t sql_verify_als_ashrink_wait_time(void *se, void *lex, void *def)
 {
     uint32 num = 0;

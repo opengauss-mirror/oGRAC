@@ -34,6 +34,7 @@
 #include "dtc_context.h"
 #include "dtc_drc_stat.h"
 #include "dtc_remote_lock.h"
+#include "knl_ckpt.h"
 #include "dtc_database.h"
 #include "dtc_shmem_scn.h"
 #include "dtc_txn_hot.h"
@@ -220,9 +221,13 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
     /* NOTICE: for demo test, we set inst_count = 2. then the single node test or multi nodes test can use UB shm. */
     g_mes.profile.inst_count = 2;
 
+    /*
+     * Region may already exist (ub_create_shm_region warns and reuses).
+     * Data buffer must be newly created; already-exist → fail (stale content / LSN).
+     */
     int ret = ub_create_shm_region(node_id, g_mes.profile.inst_count,
         g_instance->kernel.attr.ubs_cluster_hosts);
-    if (ret < EOK) {
+    if (ret != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[DRC] drc create sgm region fail, return error:%d", ret);
         return ret;
     }
@@ -243,24 +248,40 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
         return ret;
     }
 
-    // OG_LOG_RUN_INF("[DRC] start allocate data buffer, node_id=%u, region=%s, name=%s, size=%llu",
-    //     node_id, region_name, data_buf_name, remote_sga->remote_total_pool_size);
+    remote_sga->data_buf_fresh = OG_FALSE;
     ret = ubsmem_shmem_allocate(region_name, data_buf_name, remote_sga->remote_total_pool_size, 0600,
                                 UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
     if (ret == UBSM_ERR_ALREADY_EXIST) {
-        OG_LOG_RUN_WAR("[DRC]data buffer %s already exist, ret: %d", data_buf_name, ret);
+        remote_sga->data_buf_fresh = OG_FALSE;
+        OG_LOG_RUN_ERR("[DRC]data buffer %s already exist (ret=%d), refuse reuse; "
+            "destroy GBP shm (region+data) then restart. node_id=%u region=%s size=%llu",
+            data_buf_name, ret, node_id, region_name, remote_sga->remote_total_pool_size);
+        return OG_ERROR;
     } else if (ret != UBSM_OK) {
         OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d, node_id=%u, region=%s, size=%llu",
             data_buf_name, ret, node_id, region_name, remote_sga->remote_total_pool_size);
         return ret;
     }
 
-    // after allocate remote data buf, map the buf on self node.
+    remote_sga->data_buf_fresh = OG_TRUE;
+    OG_LOG_RUN_INF("[DRC]data buffer %s newly allocated size=%llu, will zero whole pool",
+        data_buf_name, remote_sga->remote_total_pool_size);
+
     ret = dtc_mmap_remote_data_buf(remote_sga, node_id);
     if (ret != UBSM_OK) {
         OG_LOG_RUN_ERR("[DRC]mmap remote data buf %s on node %u failed, ret: %d", data_buf_name, node_id, ret);
+        return ret;
     }
-    return ret;
+
+    /* Region+data both new: zero entire mapped SGA before drc_set_data_buf barriers. */
+    {
+        char *pool = remote_sga->remote_buf_addr[node_id];
+        knl_panic_log(pool != NULL, "[DRC] fresh data buffer mapped addr is NULL, node_id=%u", node_id);
+        knl_reset_large_memory(pool, remote_sga->remote_total_pool_size);
+        OG_LOG_RUN_INF("[DRC] zeroed whole remote SGA pool addr=%p size=%llu", pool,
+            remote_sga->remote_total_pool_size);
+    }
+    return OG_SUCCESS;
 }
 
 static status_t drc_set_remote_buffer(char **buf, char *remote_buf_addr, uint64 pool_size, uint64 size,
@@ -364,12 +385,16 @@ static void drc_init_remote_buf_struct(remote_sga_t *remote_sga, remote_buf_cont
             remote_page_info_t *page_info = gbp_meta_at(set, j);
             page_head_t *page = gbp_page_at(set, j, page_size);
             gbp_ckpt_set_state(page_info, 0);
+            /* UINT32_MAX + invalid page is unpublished garbage (e.g. uncleared 0xFF); reset before reuse. */
+            if (page_info->generation == UINT32_MAX && gbp_slot_page_is_invalid(page_info)) {
+                page_info->generation = 0;
+            }
             if (g_dtc->kernel->attr.enable_remote_distribute_lock) {
                 uint64 lock_match_start = (uint64)((char *)g_ub_lock + i * set->capacity * UB_RW_LOCK_SIZE);
                 page_info->lock_ptr = (uint64)((char *)lock_match_start + j * UB_RW_LOCK_SIZE);
                 ub_rw_lock_create((ub_rw_lock_t *)(page_info->lock_ptr), &g_ub_lock_config, &g_ub_lock_creator);
-                OG_LOG_RUN_INF("[DRC-GBP-LOCK] page %u, meta %p, page %p, lock addr: %p", j, (void *)page_info,
-                    (void *)page, (void *)page_info->lock_ptr);
+                //OG_LOG_RUN_INF("[DRC-GBP-LOCK] page %u, meta %p, page %p, lock addr: %p", j, (void *)page_info,
+                //    (void *)page, (void *)page_info->lock_ptr);
             }
             knl_panic_log(((uint64)(uintptr_t)page % GBP_SLOT_ALIGN) == 0,
                 "[DRC-GBP] page[%u] %p not %llu-aligned", j, page, GBP_SLOT_ALIGN);
@@ -938,8 +963,6 @@ static status_t dtc_buf_copy_from_gbp_shmem(knl_session_t *session, buf_ctrl_t *
     }
 
     if (!ub_rw_lock_get_readonly(lock)) {
-        OG_LOG_RUN_WAR("[DTC-GBP-COPY][%u-%u] page pcn mismatch without readonly, head pcn:%u, tail pcn:%u",
-            ctrl->page_id.file, ctrl->page_id.page, (uint32)temp_page->pcn, (uint32)PAGE_TAIL(temp_page)->pcn);
         return OG_ERROR;
     }
 
@@ -1071,6 +1094,67 @@ bool32 dtc_buf_gbp_should_unlock_on_leave(knl_session_t *session, buf_ctrl_t *ct
     return OG_TRUE;
 }
 
+static bool32 dtc_buf_gbp_slot_still_this_hot_page(buf_ctrl_t *ctrl)
+{
+    remote_page_info_t *meta = ctrl->shmem_page_meta;
+
+    /*
+     * Eviction bumps generation and invalidates page id under the slot X lock.
+     * Do not require is_hot / claimed_owner here: owner-copy and same-page reserve
+     * briefly clear those while gen+page still match; a pre-lock false negative would
+     * clear local mapping and break hot migration/access (hard rule 1).
+     */
+    if (meta == NULL || ctrl->shmem_page_addr == NULL) {
+        return OG_FALSE;
+    }
+    /* Legacy slots keep generation 0. Equal generations, including 0, are still this page. */
+    if (meta->generation != ctrl->gbp_slot_generation) {
+        return OG_FALSE;
+    }
+    if (meta->file_id != ctrl->page_id.file || meta->page_id != ctrl->page_id.page) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+}
+
+static status_t dtc_buf_clear_stale_gbp_mapping(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    ckpt_context_t *ckpt = &session->kernel->ckpt_ctx;
+
+    if (ctrl->transfer_status != BUF_TRANS_NONE || ctrl->gbp_store_pending || ctrl->gbp_reload_in_progress ||
+        ctrl->gbp_lock_count > 0) {
+        return OG_ERROR;
+    }
+    if (ctrl->in_ckpt) {
+        if (ckpt->batch_end == ctrl) {
+            ckpt->batch_end = ctrl->ckpt_prev;
+        }
+        ckpt_pop_page(session, ckpt, ctrl);
+    }
+    ctrl->is_dirty = 0;
+    ctrl->is_remote_dirty = 0;
+    ctrl->shmem_page_meta = NULL;
+    ctrl->shmem_page_addr = NULL;
+    ctrl->gbp_slot_generation = 0;
+    ctrl->is_in_gbp = OG_FALSE;
+    ctrl->is_hot = OG_FALSE;
+    ctrl->lock_mode = DRC_LOCK_NULL;
+    ctrl->force_request = 1;
+    if (ctrl->load_status == (uint8)BUF_NEED_LOAD_FROM_GBP) {
+        ctrl->load_status = (uint8)BUF_LOAD_FAILED;
+    }
+    return OG_SUCCESS;
+}
+
+static status_t dtc_buf_retire_stale_gbp_mapping(knl_session_t *session, buf_ctrl_t *ctrl, const char *where)
+{
+    (void)where;
+    (void)dtc_buf_clear_stale_gbp_mapping(session, ctrl);
+    cm_reset_error();
+    OG_THROW_ERROR(ERR_GBP_MSG_EAGAIN, "gbp slot generation changed");
+    return OG_ERROR;
+}
+
 status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latch_mode_t mode, bool32 *is_load)
 {
     remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
@@ -1083,6 +1167,10 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
     uint32 s_upgraded_count = 0;
     date_t gbp_lock_start = cm_monotonic_now(); // UB-stats
 
+    /*
+     * Baseline hot hit: take GBP lock first, then validate. Generation check is only an
+     * extra compare under that lock — do not pre-lock retire (that flooded EAGAIN/MES).
+     */
     if (mode == LATCH_MODE_X) {
         ub_rw_lock_t *lock = (ub_rw_lock_t *)(uintptr_t)lock_offset;
         x_already_held = ub_rw_lock_is_x_held_by_current_thread(lock, (uint8)DCS_SELF_INSTID(session),
@@ -1115,26 +1203,44 @@ status_t dtc_buf_check_local_page(knl_session_t *session, buf_ctrl_t *ctrl, latc
         if (mode == LATCH_MODE_X && did_s_upgrade) {
             dtc_buf_gbp_restore_session_s_locks(session, ctrl, lock_offset, s_upgraded, s_upgraded_count);
         }
-        OG_LOG_RUN_WAR("[DTC-GBP-CHECK][%u-%u] failed to lock shmem page, return", ctrl->page_id.file,
-                        ctrl->page_id.page);
         return ret;
     }
     if (!skip_shmem_s_lock) {
         ctrl->gbp_lock_mode = mode;
     }
 
-    // check page identifier of remote buf meta with ctrl->page_id
-    if (shmem_page_meta->file_id != ctrl->page_id.file || shmem_page_meta->page_id != ctrl->page_id.page) {
-        datafile_t *df = NULL;
-        df = DATAFILE_GET(session, ctrl->page_id.file);
-        OG_LOG_RUN_ERR("[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
-                       shmem_page_meta->file_id, shmem_page_meta->page_id, ctrl->page_id.file, ctrl->page_id.page,
-                       df->ctrl->name);
+    /*
+     * After lock: only true eviction reuse (gen bump / tombstone) retires + EAGAIN remaster.
+     * Same-gen page mismatch (and other non-evict failures) stay baseline OG_ERROR —
+     * no clear mapping, no remaster retry.
+     */
+    if (!dtc_buf_gbp_slot_still_this_hot_page(ctrl) ||
+        shmem_page_meta->file_id != ctrl->page_id.file || shmem_page_meta->page_id != ctrl->page_id.page) {
+        bool32 evict_reuse = (bool32)(shmem_page_meta != NULL &&
+            (shmem_page_meta->generation != ctrl->gbp_slot_generation || gbp_slot_page_is_invalid(shmem_page_meta)));
+
         if (mode == LATCH_MODE_X) {
             dtc_buf_gbp_abort_x_after_upgrade(session, ctrl, lock_offset, x_already_held, did_s_upgrade, s_upgraded,
                 s_upgraded_count);
         } else if (!skip_shmem_s_lock) {
             (void)drc_gbp_distribute_unlock(session, lock_offset, ctrl->page_id, mode);
+        }
+        ctrl->gbp_lock_mode = DRC_LOCK_NULL;
+
+        if (evict_reuse) {
+            return dtc_buf_retire_stale_gbp_mapping(session, ctrl, "post_lock");
+        }
+
+        if (shmem_page_meta != NULL &&
+            (shmem_page_meta->file_id != ctrl->page_id.file || shmem_page_meta->page_id != ctrl->page_id.page)) {
+            datafile_t *df = DATAFILE_GET(session, ctrl->page_id.file);
+            OG_LOG_RUN_ERR(
+                "[BUFFER-GBP] page in gbp %u-%u is incorret: local buffer file id %u, page id %u, file name %s",
+                shmem_page_meta->file_id, shmem_page_meta->page_id, ctrl->page_id.file, ctrl->page_id.page,
+                df->ctrl->name);
+        } else {
+            OG_LOG_RUN_ERR("[BUFFER-GBP][%u-%u] gbp slot not usable after lock (non-evict)",
+                ctrl->page_id.file, ctrl->page_id.page);
         }
         return OG_ERROR;
     }
@@ -1269,9 +1375,6 @@ status_t dtc_buf_try_load_from_gbp(knl_session_t *session, buf_ctrl_t *ctrl, lat
     if (ret != OG_SUCCESS) {
         dtc_buf_gbp_reload_end(session, ctrl, OG_FALSE);
         (void)dtc_buf_gbp_unhold(session, ctrl, mode);
-        OG_LOG_RUN_WAR("[BUFFER-GBP] copy_from_gbp_shmem fail: local buffer file id %u, page id %u. "
-            "remote file %u, remote page %u",
-            shmem_page_meta->file_id, shmem_page_meta->page_id, ctrl->page_id.file, ctrl->page_id.page);
         return OG_ERROR;
     }
 
@@ -1344,11 +1447,25 @@ status_t dtc_buf_try_store_to_gbp(knl_session_t *session, buf_ctrl_t *ctrl, uint
     uint8 curr_node_id = DCS_SELF_INSTID(session);
     errno_t err;
 
+    if (shmem_page_meta == NULL || shmem_page_addr == NULL ||
+        shmem_page_meta->generation != ctrl->gbp_slot_generation ||
+        shmem_page_meta->generation == UINT32_MAX ||
+        shmem_page_meta->file_id != ctrl->page_id.file || shmem_page_meta->page_id != ctrl->page_id.page) {
+        OG_LOG_DEBUG_INF("[DTC-GBP-STORE][%u-%u] skip store, slot=%u-%u gen=%u ctrl_gen=%u",
+            ctrl->page_id.file, ctrl->page_id.page,
+            shmem_page_meta != NULL ? shmem_page_meta->file_id : OG_INVALID_ID16,
+            shmem_page_meta != NULL ? shmem_page_meta->page_id : OG_INVALID_ID32,
+            shmem_page_meta != NULL ? shmem_page_meta->generation : 0, ctrl->gbp_slot_generation);
+        return OG_ERROR;
+    }
+
     // to do: check local ctrl page lsn and remote page lsn
     uint64 remote_page_lsn = curr_lsn;
 
     // Has acquired global lock when copy from gbp -> local
     remote_page_info_t new_shmem_page_meta = {0};
+    new_shmem_page_meta.generation = shmem_page_meta->generation;
+    new_shmem_page_meta.is_hot = shmem_page_meta->is_hot;
     new_shmem_page_meta.lock_ptr = shmem_page_meta->lock_ptr;
     new_shmem_page_meta.head_lsn = remote_page_lsn;
     new_shmem_page_meta.file_id = ctrl->page_id.file;

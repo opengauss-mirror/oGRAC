@@ -36,6 +36,12 @@
 #include "knl_rbp.h"
 #include "dtc_remote_lock.h"
 #include "dtc_remote_buffer.h"
+#include "cm_memory.h"
+#include "knl_ckpt.h"
+#include "knl_remote_buffer.h"
+
+/* Non-try GBP alloc: limited recycle+ckpt rounds (no infinite while). */
+#define GBP_GET_CTRL_MAX_RETRY    3U
 
 #define BUF_PAGE_COST (DEFAULT_PAGE_SIZE(session) + BUCKET_TIMES * sizeof(buf_bucket_t) + sizeof(buf_ctrl_t))
 #define BUF_PAGE_COST_WITH_RBP (BUF_PAGE_COST + sizeof(buf_rbp_ctrl_t))
@@ -76,6 +82,8 @@ static const remote_page_info_t g_invalid_shmem_page_metadata = {
     .xlog_owner_node = OG_INVALID_ID16,
     .xlog_owner_node_timeline_id = { OG_INVALID_ID8, OG_INVALID_ID8, OG_INVALID_ID8, OG_INVALID_ID8, OG_INVALID_ID8,
                              OG_INVALID_ID8 },
+    .is_hot = 0,
+    .generation = 0,
 };
 
 
@@ -560,7 +568,7 @@ static inline bool32 buf_can_expire(buf_ctrl_t *ctrl, buf_expire_type_t expire_t
 }
 
 
-static bool32 buf_can_expire_shmem(buf_ctrl_t *ctrl, buf_expire_type_t expire_type)
+static bool32 buf_gbp_can_expire_shmem(buf_ctrl_t *ctrl, buf_expire_type_t expire_type)
 {
     // TOODO: This should be an atomic load from shmem with UB API
     remote_page_info_t *shmem_meta = ctrl->shmem_page_meta;
@@ -776,11 +784,11 @@ static uint32 buf_expire_normal(knl_session_t *session, buf_set_t *set, buf_ctrl
 
     return 1; // successful number
 }
-static uint32 buf_expire_normal_shmem(knl_session_t *session, buf_set_t *set, buf_ctrl_t *ctrl,
+static uint32 buf_gbp_expire_normal_shmem(knl_session_t *session, buf_set_t *set, buf_ctrl_t *ctrl,
                                       buf_expire_type_t expire_type)
 {
     remote_page_info_t *shmem_meta = ctrl->shmem_page_meta;
-    if (!buf_can_expire_shmem(ctrl, expire_type)) {
+    if (!buf_gbp_can_expire_shmem(ctrl, expire_type)) {
         // TOODO: this should be an atomic UB store
         shmem_meta->touch_number = ctrl->touch_number / BUF_AGE_DECREASE_FACTOR;
         return 0;  // fail
@@ -789,7 +797,7 @@ static uint32 buf_expire_normal_shmem(knl_session_t *session, buf_set_t *set, bu
     buf_bucket_t *bucket = BUF_GET_BUCKET(set, ctrl->bucket_id);
     cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     // Check again
-    if (!buf_can_expire_shmem(ctrl, expire_type)) {
+    if (!buf_gbp_can_expire_shmem(ctrl, expire_type)) {
         cm_spin_unlock(&bucket->lock);
         return 0;  // fail
     }
@@ -979,9 +987,85 @@ static void buf_move_clean_list(knl_session_t *session, buf_set_t *set, buf_lru_
     cm_release_cond(&set->set_cond);
 }
 
-status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta,
+static bool32 buf_gbp_shmem_ctrl_is_reusable(buf_ctrl_t *ctrl)
+{
+    remote_page_info_t *meta = NULL;
+
+    if (ctrl == NULL || ctrl->bucket_id != OG_INVALID_ID32 || ctrl->shmem_page_meta == NULL) {
+        return OG_FALSE;
+    }
+    meta = ctrl->shmem_page_meta;
+    if (meta->is_hot != OG_FALSE || gbp_slot_names_live_page(meta)) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+}
+
+/* Without the slot X lock. need_ckpt is set when the image is stable but the cursor is still behind. */
+static bool32 buf_gbp_shmem_flush_ready(buf_ctrl_t *ctrl, bool32 *need_ckpt)
+{
+    remote_page_info_t *meta = ctrl->shmem_page_meta;
+    uint32 page_size;
+    uint64 head;
+    uint64 tail;
+    uint64 state;
+
+    if (need_ckpt != NULL) {
+        *need_ckpt = OG_FALSE;
+    }
+    if (meta == NULL || ctrl->shmem_page_addr == NULL || meta->generation == UINT32_MAX) {
+        return OG_FALSE;
+    }
+    page_size = g_dtc->kernel->attr.page_size;
+    head = meta->head_lsn;
+    tail = *gbp_tail_ptr_from_page(ctrl->shmem_page_addr, page_size);
+    state = gbp_ckpt_get_state(meta);
+    if (gbp_ckpt_state_is_marked(state) || head == 0 || head != tail) {
+        return OG_FALSE;
+    }
+    if (gbp_ckpt_state_lsn(state) < head) {
+        if (need_ckpt != NULL) {
+            *need_ckpt = OG_TRUE;
+        }
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+}
+
+static bool32 buf_gbp_shmem_flush_recheck(buf_ctrl_t *ctrl, uint64 lock_ptr, uint64 head_lsn)
+{
+    remote_page_info_t *meta = ctrl->shmem_page_meta;
+    uint32 page_size;
+    uint64 tail;
+    uint64 state;
+
+    if (meta == NULL || ctrl->shmem_page_addr == NULL || meta->lock_ptr != lock_ptr) {
+        return OG_FALSE;
+    }
+    if (ctrl->is_hot == OG_FALSE || meta->is_hot == OG_FALSE) {
+        return OG_FALSE;
+    }
+    if (meta->file_id != ctrl->page_id.file || meta->page_id != ctrl->page_id.page) {
+        return OG_FALSE;
+    }
+    if (meta->head_lsn != head_lsn || meta->head_lsn == 0 || meta->generation == UINT32_MAX) {
+        return OG_FALSE;
+    }
+    page_size = g_dtc->kernel->attr.page_size;
+    tail = *gbp_tail_ptr_from_page(ctrl->shmem_page_addr, page_size);
+    state = gbp_ckpt_get_state(meta);
+    if (meta->head_lsn != tail || gbp_ckpt_state_is_marked(state) || gbp_ckpt_state_lsn(state) < meta->head_lsn) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+}
+
+status_t buf_gbp_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta,
                          bool32 list_locked)
 {
+    if (session == NULL || !session->kernel->attr.enable_ubsmem) {
+        return OG_ERROR;
+    }
     // retreive shmem set from global buffer context
     remote_buf_context_t *shmem_ctx = DRC_GBP_BUF_CTX;
 
@@ -1002,15 +1086,29 @@ status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_
         return ret;
     }
 
-    // TOODO UB API? to copy from remote addr
+    // Copy the published image first. DRC keeps this head_lsn; the slot itself is tombstoned below.
     errno_t err = memcpy_s(out_shmem_page_meta, sizeof(remote_page_info_t), shmem_ctrl->shmem_page_meta,
                            sizeof(remote_page_info_t));
     knl_securec_check(err);
 
-    // Invalidate the 256-bit shmem metadata from the buffer ctrl
-    err = memcpy_s(shmem_ctrl->shmem_page_meta, sizeof(remote_page_info_t), &g_invalid_shmem_page_metadata,
-                   sizeof(remote_page_info_t));
-    knl_securec_check(err);
+    {
+        remote_page_info_t *meta = shmem_ctrl->shmem_page_meta;
+        uint32 old_gen = meta->generation;
+        uint32 page_size = DEFAULT_PAGE_SIZE(session);
+        uint32 new_gen = (old_gen == UINT32_MAX) ? UINT32_MAX : (old_gen + 1);
+
+        meta->is_hot = OG_FALSE;
+        CM_MFENCE;
+        if (shmem_ctrl->shmem_page_addr != NULL) {
+            *gbp_tail_ptr_from_page(shmem_ctrl->shmem_page_addr, page_size) = 0;
+        }
+        err = memcpy_s(meta, sizeof(remote_page_info_t), &g_invalid_shmem_page_metadata, sizeof(remote_page_info_t));
+        knl_securec_check(err);
+        meta->lock_ptr = lock_ptr;
+        meta->generation = new_gen;
+        meta->is_hot = OG_FALSE;
+        gbp_ckpt_set_state(meta, 0);
+    }
 
     // Release and free global lock
     ret = drc_gbp_distribute_unlock(session, lock_ptr, shmem_ctrl->page_id, LATCH_MODE_X);
@@ -1034,6 +1132,8 @@ status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_
     shmem_ctrl->load_status = (uint8)BUF_NEED_LOAD;
     shmem_ctrl->lock_mode = DRC_LOCK_NULL;
     shmem_ctrl->is_hot = OG_FALSE;
+    shmem_ctrl->is_in_gbp = OG_FALSE;
+    shmem_ctrl->gbp_slot_generation = 0;
 
     cm_spin_lock(&bucket->lock, &session->stat->spin_stat.stat_bucket);
     buf_remove_from_bucket(bucket, shmem_ctrl);
@@ -1153,95 +1253,215 @@ static buf_ctrl_t *buf_recycle(knl_session_t *session, buf_set_t *set, buf_lru_l
     return item;
 }
 
-// Only master can prepare a slot for a page so that this page can be promoted to hot. All hot pages in the shmem of
-// this node belongs to this node. Therefore, this function is only called by master. Evicted page's master must be this
-// node
+/*
+ * Never call ckpt_trigger while holding GBP LRU list->lock — that starved MES.
+ * Fire once after unlock.
+ */
+static inline void buf_gbp_recycle_shmem_ckpt_after_unlock(knl_session_t *session, bool32 need_ckpt_pending)
+{
+    if (!need_ckpt_pending) {
+        return;
+    }
+    ckpt_trigger(session, OG_FALSE, CKPT_TRIGGER_CLEAN);
+}
+
+/*
+ * After releasing list->lock to wait on slot X, re-check the victim under list lock
+ * before invalidate/remove. Another recycle may have already tombstoned or reused it.
+ */
+static bool32 buf_gbp_recycle_shmem_victim_still_valid(buf_ctrl_t *item, buf_lru_list_t *list, page_id_t expect_page,
+                                                  uint64 expect_lock_ptr)
+{
+    remote_page_info_t *meta = NULL;
+
+    if (item == NULL || list == NULL) {
+        return OG_FALSE;
+    }
+    if (item->list_id != list->type) {
+        return OG_FALSE;
+    }
+    if (!IS_SAME_PAGID(item->page_id, expect_page)) {
+        return OG_FALSE;
+    }
+    meta = item->shmem_page_meta;
+    if (item->bucket_id == OG_INVALID_ID32 || item->is_hot == OG_FALSE || meta == NULL ||
+        meta->is_hot == OG_FALSE) {
+        return OG_FALSE;
+    }
+    if (meta->lock_ptr != expect_lock_ptr) {
+        return OG_FALSE;
+    }
+    if (meta->file_id != expect_page.file || meta->page_id != expect_page.page) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+}
+
 /*
  * Reclaim a ctrl from the global buffer pool (GBP) so it can hold a page loaded from shared memory.
  * Only reached when the UB scenario is enabled (attr.enable_ubsmem).
+ * Only master prepares slots for promotion; hot pages in this node's shmem belong to this node.
+ *
+ * Hot eviction must NOT block on slot X while holding list->lock (MES/TMS starvation).
+ * Pattern: pick under list lock → unlock → X → re-lock → revalidate → invalidate/remove → unlock → unlock X.
  */
-static buf_ctrl_t *buf_recycle_shmem(knl_session_t *session, buf_set_t *shmem_set, buf_lru_list_t *list)
+static buf_ctrl_t *buf_gbp_recycle_shmem(knl_session_t *session, buf_set_t *shmem_set, buf_lru_list_t *list)
 {
     buf_ctrl_t *shift = NULL;
-    uint32 threshold = BUF_LRU_SEARCH_THRESHOLD(shmem_set, session);
+    /*
+     * Cap via _GBP_RECYCLE_SCAN_BUDGET / _GBP_RECYCLE_NEED_CKPT_EARLY (defaults 128/16).
+     * Keep well below historical capacity*lru_search_threshold (~70k) that starved MES.
+     */
+    uint32 threshold = session->kernel->attr.gbp_recycle_scan_budget;
+    uint32 need_ckpt_early = session->kernel->attr.gbp_recycle_need_ckpt_early;
     uint32 step = 0;
     uint32 expired_num;
+    uint32 need_ckpt_cnt = 0;
+    bool32 need_ckpt_pending = OG_FALSE;
+    page_id_t victim_page = INVALID_PAGID;
+
+    if (!session->kernel->attr.enable_ubsmem) {
+        return NULL;
+    }
+    if (threshold < OG_MIN_GBP_RECYCLE_SCAN_BUDGET) {
+        threshold = OG_DEFAULT_GBP_RECYCLE_SCAN_BUDGET;
+    }
+    if (need_ckpt_early < OG_MIN_GBP_RECYCLE_NEED_CKPT_EARLY) {
+        need_ckpt_early = OG_DEFAULT_GBP_RECYCLE_NEED_CKPT_EARLY;
+    }
+    if (need_ckpt_early > threshold) {
+        need_ckpt_early = threshold;
+    }
 
     cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
     buf_ctrl_t *item = list->lru_last;
 
-    // Find one victim.
+    // Find one victim. A live page id is never reused; only a tombstone or an empty slot is.
     while (item != NULL) {
+        bool32 need_ckpt = OG_FALSE;
+        remote_page_info_t *meta = item->shmem_page_meta;
+
         step++;
-        // For pages in shmem, write_list.count always == 0
         if (step > threshold) {
             item = NULL;
             break;
         }
-        if (item->bucket_id == OG_INVALID_ID32) {
-            /* The page has been invalided, so directly reuse it */
+        if (buf_gbp_shmem_ctrl_is_reusable(item)) {
             break;
         }
-        if (item->is_hot == OG_FALSE) {
-            // Ctrl is marked as cold, which means the correspond page is demoted to cold recently by
-            // drc_invalidate_shmem_page call, so directly reuse it
-            break;
+        if (item->bucket_id == OG_INVALID_ID32 || item->is_hot == OG_FALSE || meta == NULL ||
+            meta->is_hot == OG_FALSE) {
+            shift = item;
+            item = item->prev;
+            buf_lru_shift_ctrl(list, shift);
+            continue;
+        }
+        if (!buf_gbp_shmem_flush_ready(item, &need_ckpt)) {
+            if (need_ckpt) {
+                /* Defer ckpt; do not shift every need_ckpt page under spinlock. */
+                need_ckpt_pending = OG_TRUE;
+                need_ckpt_cnt++;
+                item = item->prev;
+                if (need_ckpt_cnt >= need_ckpt_early) {
+                    item = NULL;
+                    break;
+                }
+                continue;
+            }
+            shift = item;
+            item = item->prev;
+            buf_lru_shift_ctrl(list, shift);
+            continue;
         }
         if (BUF_IS_COMPRESS(item)) {
-            // TOODO: We don't consider the compressed situation in shmem for now
+            expired_num = 0;
         } else {
-            expired_num = buf_expire_normal_shmem(session, shmem_set, item, BUF_EVICT);
+            expired_num = buf_gbp_expire_normal_shmem(session, shmem_set, item, BUF_EVICT);
         }
         if (expired_num != 0) {
-            // Success! We found a page that was successfully evicted/flushed.
-            break;  // We evict a page to reuse.
+            break;
         }
         shift = item;
         item = item->prev;
-        // We can't move a page in shared_mem to write_list cause gbp is not responsible for treating dirty page.
-        // So when fail to evict it, we always move it to be beginning of the list.
         buf_lru_shift_ctrl(list, shift);
-    }  // while ends here
+    }
 
     if (item == NULL) {
+        cm_spin_unlock(&list->lock);
+        buf_gbp_recycle_shmem_ckpt_after_unlock(session, need_ckpt_pending);
+        return NULL;
+    }
+
+    victim_page = item->page_id;
+    remote_page_info_t *shmem_meta = item->shmem_page_meta;
+    uint64 lock_ptr = (shmem_meta == NULL) ? 0 : shmem_meta->lock_ptr;
+    uint64 snapped_head = (shmem_meta == NULL) ? 0 : shmem_meta->head_lsn;
+    status_t ret = OG_SUCCESS;
+    bool32 evict_hot = (bool32)(item->bucket_id != OG_INVALID_ID32 && item->is_hot == OG_TRUE &&
+        shmem_meta != NULL && shmem_meta->is_hot != OG_FALSE);
+
+    if (!evict_hot) {
+        /* Reusable / cold path: remove under list lock (no slot X). */
+        buf_lru_remove_ctrl(list, item);
+        item->list_id = list->type;
+        session->stat->buffer_recycle_step += step;
+        buf_lru_adjust_old_len(list);
+        cm_spin_unlock(&list->lock);
+        buf_gbp_recycle_shmem_ckpt_after_unlock(session, need_ckpt_pending);
+        return item;
+    }
+
+    /*
+     * Hot path: drop list->lock before blocking on slot X, then re-lock and revalidate.
+     * Fire deferred ckpt now so it is not delayed across a long X wait.
+     */
+    cm_spin_unlock(&list->lock);
+    buf_gbp_recycle_shmem_ckpt_after_unlock(session, need_ckpt_pending);
+    need_ckpt_pending = OG_FALSE;
+
+    do {
+        ret = drc_gbp_distribute_lock(session, lock_ptr, victim_page, LATCH_MODE_X);
+        if (ret != OG_SUCCESS) {
+            cm_sleep(1);
+        }
+    } while (ret != OG_SUCCESS);
+
+    cm_spin_lock(&list->lock, &session->stat->spin_stat.stat_buffer);
+
+    if (!buf_gbp_recycle_shmem_victim_still_valid(item, list, victim_page, lock_ptr)) {
+        (void)drc_gbp_distribute_unlock(session, lock_ptr, victim_page, LATCH_MODE_X);
         cm_spin_unlock(&list->lock);
         return NULL;
     }
 
-    // Now we find the item to reuse, lock the global metadata first before we invalidate the shmem page to avoid
-    // anybody else using it
-    remote_page_info_t *shmem_meta = item->shmem_page_meta;
-    uint64 lock_ptr = shmem_meta->lock_ptr;
-    status_t ret;
-
-    do {
-        ret = drc_gbp_distribute_lock(session, lock_ptr, item->page_id, LATCH_MODE_X);
-        if (ret != OG_SUCCESS) {
-            cm_sleep(1);  // sleep 1 ms to avoid busy spinning
-        }
-    } while (ret != OG_SUCCESS);
-
-    // Now we find the item to reuse, we call drc_invalidate_shmem_page_by_ctrl to invalidate the shmem and demote the
-    // page to cold. The caller already holds the LRU list lock, so the invalidate path must not re-lock it.
-    if (DB_IS_CLUSTER(session) && (item != NULL) && item->is_hot == OG_TRUE) {
-        // Master mark it in its own DRC, global meta data will also be cleaned
-        drc_invalidate_shmem_page_by_ctrl(session, item, OG_TRUE);
+    if (!buf_gbp_shmem_flush_recheck(item, lock_ptr, snapped_head)) {
+        (void)drc_gbp_distribute_unlock(session, lock_ptr, victim_page, LATCH_MODE_X);
+        buf_lru_shift_ctrl(list, item);
+        cm_spin_unlock(&list->lock);
+        return NULL;
     }
 
-    // 9. Update LRU metadata (like list length) and unlock.
+    if (DB_IS_CLUSTER(session)) {
+        ret = drc_gbp_invalidate_shmem_page_by_ctrl(session, item, OG_TRUE);
+        if (ret != OG_SUCCESS) {
+            (void)drc_gbp_distribute_unlock(session, lock_ptr, victim_page, LATCH_MODE_X);
+            buf_lru_shift_ctrl(list, item);
+            cm_spin_unlock(&list->lock);
+            return NULL;
+        }
+    }
+
     buf_lru_remove_ctrl(list, item);
     item->list_id = list->type;
     session->stat->buffer_recycle_step += step;
     buf_lru_adjust_old_len(list);
     cm_spin_unlock(&list->lock);
 
-    // Release and free global lock
-    ret = drc_gbp_distribute_unlock(session, lock_ptr, item->page_id, LATCH_MODE_X);
+    (void)drc_gbp_distribute_unlock(session, lock_ptr, victim_page, LATCH_MODE_X);
     item->gbp_lock_mode = DRC_LOCK_NULL;
     item->gbp_lock_count = 0;
     item->gbp_store_pending = 0;
 
-    // Return the free block to the caller.
     return item;
 }
 
@@ -1360,10 +1580,16 @@ static inline void buf_bind_ctrl_shmem_after_init(buf_set_t *set, buf_ctrl_t *ct
     buf_bind_compound_shmem_slot(set, ctrl, id);
 }
 
-static void buf_get_ctrl_shmem(knl_session_t *session, buf_set_t *shmem_set, uint32 options, buf_ctrl_t **ctrl)
+static void buf_get_ctrl_shmem(knl_session_t *session, buf_set_t *shmem_set, uint32 options, page_id_t page_id,
+    buf_ctrl_t **ctrl)
 {
     buf_ctrl_t *item = NULL;
     uint32 timeout_ms = session->kernel->attr.page_clean_wait_timeout;
+    bool32 gbp_try = (bool32)((options & ENTER_PAGE_GBP_TRY) != 0);
+    uint32 max_retry = gbp_try ? 1U : GBP_GET_CTRL_MAX_RETRY;
+    uint32 attempt;
+
+    *ctrl = NULL;
     item = buf_alloc_hwm_shmem(session, shmem_set);
     if (item != NULL) {
         buf_init_ctrl(session, shmem_set, item, OG_TRUE, options);
@@ -1373,22 +1599,37 @@ static void buf_get_ctrl_shmem(knl_session_t *session, buf_set_t *shmem_set, uin
         *ctrl = item;
         return;
     }
-    while (item == NULL) {
-        item = buf_recycle_shmem(session, shmem_set, &shmem_set->scan_list);
+
+    /*
+     * Bounded recycle: migrate (GBP_TRY) gets one pass then NULL so caller can skip CONVERTING_TO_GBP.
+     * Other GBP alloc paths get a few short recycle+ckpt rounds — never spin forever.
+     */
+    for (attempt = 0; attempt < max_retry && item == NULL; attempt++) {
+        item = buf_gbp_recycle_shmem(session, shmem_set, &shmem_set->scan_list);
         if (item == NULL && !(options & ENTER_PAGE_SEQUENTIAL)) {
-            item = buf_recycle_shmem(session, shmem_set, &shmem_set->main_list);
+            item = buf_gbp_recycle_shmem(session, shmem_set, &shmem_set->main_list);
         }
         if (item == NULL) {
+            ckpt_trigger(session, OG_FALSE, CKPT_TRIGGER_CLEAN);
+            session->stat->buffer_recycle_wait++;
+            if (gbp_try) {
+                break;
+            }
             if (timeout_ms == 0) {
                 knl_wait_for_tick(session);
             } else {
                 (void)cm_wait_cond(&shmem_set->set_cond, timeout_ms);
             }
-            session->stat->buffer_recycle_wait++;
         } else {
             session->stat->buffer_recycle_cnt++;
         }
     }
+
+    if (item == NULL) {
+        *ctrl = NULL;
+        return;
+    }
+
     buf_init_ctrl(session, shmem_set, item, OG_FALSE, options);
     /* Must re-bind after buf_init_ctrl() resets the ctrl */
     buf_bind_ctrl_shmem_after_init(shmem_set, item);
@@ -1586,11 +1827,33 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
 
     knl_begin_session_wait(session, BUFFER_POOL_ALLOC, OG_FALSE);
     if (in_shmem) {
-        buf_get_ctrl_shmem(session, set, options, &item);
+        buf_get_ctrl_shmem(session, set, options, page_id, &item);
     } else {
         buf_get_ctrl(session, set, options, &item);
     }
     knl_end_session_wait(session, BUFFER_POOL_ALLOC);
+
+    if (in_shmem && item == NULL) {
+        return NULL;
+    }
+
+    /*
+     * Baseline migrate alloc: do not reserve/bump generation here. Generation is bumped only in
+     * buf_gbp_shmem_evict; owner copy publishes page id + gen. Pre-publish reserve broke hot migrate.
+     */
+    if (in_shmem) {
+        item->page_id = page_id;
+        if (item->shmem_page_meta != NULL) {
+            /* Unpublished garbage: do not carry UINT32_MAX into claim/publish. */
+            if (item->shmem_page_meta->generation == UINT32_MAX &&
+                !gbp_slot_names_live_page(item->shmem_page_meta)) {
+                item->shmem_page_meta->generation = 0;
+            }
+            item->gbp_slot_generation = item->shmem_page_meta->generation;
+        } else {
+            item->gbp_slot_generation = 0;
+        }
+    }
 
     /*
      * if the same page ctrl has been added to bucket concurrently,
@@ -1601,6 +1864,10 @@ buf_ctrl_t *buf_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_mode
     if (SECUREC_UNLIKELY(temp != NULL)) {
         (void)cm_atomic32_fetch_inc(&temp->ref_num);
         buf_latch_ctrl(session, bucket, temp, mode);
+        if (in_shmem) {
+            /* Baseline: drop the unused slot on cold LRU; do not open-reservation-retire. */
+            item->is_hot = OG_FALSE;
+        }
         buf_set_ctrl_options(session, set, temp, options);
         knl_panic_log(IS_SAME_PAGID(page_id, temp->page_id), "the page_id and temp's page_id are not same, "
                       "panic info: temp page %u-%u type %u curr page %u-%u",
@@ -1708,7 +1975,7 @@ buf_ctrl_t *buf_try_alloc_ctrl(knl_session_t *session, page_id_t page_id, latch_
 
     knl_begin_session_wait(session, BUFFER_POOL_ALLOC, OG_FALSE);
     if (in_shmem) {
-        buf_get_ctrl_shmem(session, set, options, &item);
+        buf_get_ctrl_shmem(session, set, options, page_id, &item);
     } else {
         buf_get_ctrl(session, set, options, &item);
     }

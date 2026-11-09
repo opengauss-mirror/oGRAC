@@ -1111,6 +1111,13 @@ typedef enum en_errno {
     /* DCS */
     ERR_DCS_REQ_PAGE_FAILED = 3000,
     ERR_DCS_MSG_EAGAIN = 3001,
+    /*
+     * GBP retry, distinct from ask-master EAGAIN (ERR_DCS_MSG_EAGAIN). Detail string is %s.
+     * Thrown when:
+     *   1. disk page lsn is older than the GBP eviction expect lsn
+     *   2. the mapped GBP slot generation changed (slot reused or evicted)
+     */
+    ERR_GBP_MSG_EAGAIN = 3002,
     // GDV,range[3400, 3499]
     ERR_GDV_ALLOC_SQL_SESSION = 3100,
     ERR_GDV_PREP_AND_EXEC = 3101,

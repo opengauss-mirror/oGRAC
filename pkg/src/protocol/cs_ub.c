@@ -29,6 +29,10 @@
 #include "cm_ubs_mem.h"
 #include "cm_ub_sdk.h"
 #include "cm_system.h"
+#ifndef WIN32
+#include <pwd.h>
+#include <unistd.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -178,7 +182,9 @@ status_t ub_create_shm_region(uint32 host_id, uint32 inst_count, const char *clu
 
     ret = ubsmem_create_region(region_name, 0, &region);
     if (ret == UBSM_ERR_ALREADY_EXIST) {
-        OG_LOG_RUN_WAR("ubsmem region %s already exist, ret: %d", region_name, ret);
+        /* Leftover after unclean stop: reuse region; data buffer path still decides fresh vs refuse. */
+        OG_LOG_RUN_WAR("ubsmem region %s already exist, ret: %d, reuse existing region", region_name, ret);
+        return OG_SUCCESS;
     } else if (ret != EOK) {
         OG_LOG_RUN_ERR("ubsmem_create_region %s failed. error:%d", region_name, ret);
         return OG_ERROR;
@@ -206,7 +212,13 @@ status_t ub_delete_shm_region(uint32 host_id)
 status_t ub_delete_shm(uint32 host_id)
 {
     char data_buf_name[MAX_REGION_NAME_DESC_LENGTH] = {0};
-    int ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "data_buf_part_%d", host_id);
+    struct passwd *pwd = getpwuid(getuid());
+    if (pwd == NULL || pwd->pw_name == NULL) {
+        OG_LOG_RUN_ERR("Failed to resolve uid for data buffer name");
+        return OG_ERROR;
+    }
+    /* Must match allocate/mmap name: <user>_data_buf_part_<id> */
+    int ret = sprintf_s(data_buf_name, sizeof(data_buf_name), "%s_data_buf_part_%d", pwd->pw_name, host_id);
     if (ret < EOK) {
         OG_LOG_RUN_ERR("Failed to format data buffer name, error:%d", ret);
         return OG_ERROR;

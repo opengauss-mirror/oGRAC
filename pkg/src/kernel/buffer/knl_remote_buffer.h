@@ -64,13 +64,22 @@ static inline void remote_buf_unlatch(knl_session_t *session, buf_ctrl_t *ctrl, 
     cm_spin_unlock(&bucket->lock);
 }
 
-/* GBP migrate alloc failed: leave LOAD_FAILED so next buf_alloc_ctrl can take over (NEED_LOAD alone deadlocks). */
+void drc_finish_or_retire_gbp_slot(knl_session_t *session, buf_ctrl_t *ctrl);
+
+/* GBP migrate alloc failed: claim a finished image, otherwise retire the reservation. */
 static inline void remote_buf_release_gbp_alloc_failed(knl_session_t *session, buf_ctrl_t *ctrl)
 {
     if (ctrl == NULL) {
         return;
     }
-    ctrl->load_status = (uint8)BUF_LOAD_FAILED;
+    drc_finish_or_retire_gbp_slot(session, ctrl);
+    if (ctrl->shmem_page_meta != NULL && ctrl->shmem_page_meta->is_hot != OG_FALSE &&
+        ctrl->shmem_page_meta->file_id == ctrl->page_id.file &&
+        ctrl->shmem_page_meta->page_id == ctrl->page_id.page) {
+        ctrl->load_status = (uint8)BUF_IS_LOADED;
+    } else {
+        ctrl->load_status = (uint8)BUF_LOAD_FAILED;
+    }
     remote_buf_unlatch(session, ctrl, OG_TRUE);
 }
 

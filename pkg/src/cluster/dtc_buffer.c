@@ -23,6 +23,7 @@
  * -------------------------------------------------------------------------
  */
 #include "knl_cluster_module.h"
+#include <string.h>
 #include <knl_buffer.h>
 #include "dtc_buffer.h"
 #include "dtc_drc.h"
@@ -36,6 +37,7 @@
 #include "knl_rbp.h"
 #include "cm_ubs_mem.h"
 #include "dtc_remote_lock.h"
+#include "knl_ckpt.h"
 
 static inline bool32 dtc_buf_prepare_ctrl(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t **ctrl)
 {
@@ -49,9 +51,79 @@ static inline bool32 dtc_buf_prepare_ctrl(knl_session_t *session, buf_read_assis
     return OG_TRUE;
 }
 
+/*
+ * Local GBP leftover flags on a data ctrl (is_in_gbp / is_hot / disk_expect_lsn), typically
+ * with shmem_page_meta == NULL. Two distinct origins — both share this gate:
+ *
+ * 1) Post-migrate / promote leftover (page still hot in GBP):
+ *    Owner copy-to-GBP sets ctrl->is_in_gbp without attaching shmem_page_meta, and may keep
+ *    local dirty; DRC page_hot_stat.is_in_gbp is already true. Not an eviction remnant.
+ *
+ * 2) Post-eviction leftover (page already cold):
+ *    Mapping cleared / dcs_gbp_apply_evict_flush_lsn; disk_expect_lsn or stale is_in_gbp/is_hot may
+ *    remain until the body is proven against the eviction floor (barrier_lsn / reload).
+ *
+ * Ordinary dirty pages have none of these flags and must not take the DRC barrier path.
+ */
+static inline bool32 dtc_buf_gbp_leftover(buf_ctrl_t *ctrl)
+{
+    return (bool32)(ctrl->is_in_gbp || ctrl->is_hot || ctrl->disk_expect_lsn != 0);
+}
+
+/* Local body is behind GBP or still hot without a mapping. Caller must reload. */
+static inline void dtc_buf_gbp_drop_stale_local(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    ckpt_context_t *ckpt = &session->kernel->ckpt_ctx;
+
+    if (ctrl->in_ckpt && (ctrl->is_dirty || ctrl->is_remote_dirty)) {
+        if (ckpt->batch_end == ctrl) {
+            ckpt->batch_end = ctrl->ckpt_prev;
+        }
+        ckpt_pop_page(session, ckpt, ctrl);
+    }
+    ctrl->is_dirty = 0;
+    ctrl->is_remote_dirty = 0;
+    ctrl->lock_mode = DRC_LOCK_NULL;
+    ctrl->force_request = 1;
+}
+
+/*
+ * UB only. Live hot hit (shmem_page_meta != NULL) and ordinary pages return after the latch check.
+ * DRC barrier runs only when the mapping is gone and a GBP leftover flag remains.
+ */
+static inline bool32 dtc_buf_gbp_try_local(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl)
+{
+    uint64 barrier_lsn = 0;
+    bool32 page_in_gbp = OG_FALSE;
+
+    if (!dcs_local_page_usable(session, ctrl, ra->mode)) {
+        return OG_FALSE;
+    }
+    if (ctrl->page == NULL || ctrl->shmem_page_meta != NULL || !dtc_buf_gbp_leftover(ctrl)) {
+        return OG_TRUE;
+    }
+    if (dcs_gbp_get_page_ckpt_guard(session, ctrl->page_id, &barrier_lsn, &page_in_gbp) != OG_SUCCESS) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DCS][%u-%u]: try_local guard query failed, force remote local_lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn);
+        ctrl->lock_mode = DRC_LOCK_NULL;
+        ctrl->force_request = 1;
+        return OG_FALSE;
+    }
+    /* Cold and not behind the eviction floor: local body is usable. */
+    if (!page_in_gbp && (barrier_lsn == 0 || ctrl->page->lsn >= barrier_lsn)) {
+        return OG_TRUE;
+    }
+    dtc_buf_gbp_drop_stale_local(session, ctrl);
+    return OG_FALSE;
+}
+
 static inline bool32 dtc_buf_try_local(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl)
 {
-    return dcs_local_page_usable(session, ctrl, ra->mode);
+    if (!session->kernel->attr.enable_ubsmem || !DB_IS_CLUSTER(session)) {
+        return dcs_local_page_usable(session, ctrl, ra->mode);
+    }
+    return dtc_buf_gbp_try_local(session, ra, ctrl);
 }
 
 static inline bool32 dtc_buf_try_edp(knl_session_t *session, buf_read_assist_t *ra, buf_ctrl_t *ctrl)
@@ -286,7 +358,10 @@ static status_t dtc_buf_finish(knl_session_t *session, buf_read_assist_t *ra, bu
         if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
             ret = dtc_buf_check_local_page(session, ctrl, ra->mode, &is_load_from_gbp);
             if (ret != OG_SUCCESS) {
-                OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to check gbp page.", ctrl->page_id.file, ctrl->page_id.page);
+                /* Generation retire returns EAGAIN by design; do not flood run log. */
+                if (cm_get_error_code() != ERR_GBP_MSG_EAGAIN) {
+                    OG_LOG_RUN_ERR("[DTC-GBP][%u-%u] failed to check gbp page.", ctrl->page_id.file, ctrl->page_id.page);
+                }
                 return ret;
             }
             gbp_held = OG_TRUE;
@@ -494,22 +569,61 @@ static inline void dtc_read_page_record_stat(knl_session_t *session, date_t elap
     } // UB-stats
 } // UB-stats
 
+/*
+ * Only eviction-reuse EAGAIN may remaster inside dtc_read_page.
+ * HOT_FIRST_COPY / ask-master EAGAIN stay in dcs_request_page (baseline).
+ * All other finish failures return like baseline — no outer retry.
+ */
+static inline bool32 dtc_is_gbp_evict_reuse_eagain(void)
+{
+    return (bool32)(cm_get_error_code() == ERR_GBP_MSG_EAGAIN);
+}
+
+static inline bool32 dtc_read_page_retry_after_eagain(knl_session_t *session, buf_ctrl_t *ctrl)
+{
+    if (!session->kernel->attr.enable_ubsmem || !dtc_is_gbp_evict_reuse_eagain()) {
+        return OG_FALSE;
+    }
+
+    bool32 clear_busy = (bool32)(ctrl->shmem_page_meta != NULL);
+    buf_unlatch(session, ctrl, OG_TRUE);
+    cm_reset_error();
+    if (clear_busy) {
+        cm_sleep(DCS_RESEND_MSG_INTERVAL);
+    }
+    return OG_TRUE;
+}
+
+/*
+ * dtc_read_page — one outer retry loop, four resolve scenarios, then finish.
+ *
+ * Scenario A: local DRC lock already usable
+ * Scenario B: ENTER_PAGE_TRY soft miss (do not force remote)
+ * Scenario C: UB + local gbp mapping still set → do not ask master this round;
+ *             finish -> check_local_page does same-gen hit or generation retire
+ * Scenario D: no local gbp mapping → classic remote DRC, then finish
+ *
+ * After generation retire only, finish returns EAGAIN with shmem cleared; the
+ * next loop iteration falls into Scenario D and asks master (design 3.1 / 3.2).
+ * Non-eviction finish failures do not retry — same as baseline.
+ */
 status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
 {
     buf_ctrl_t *ctrl = NULL;
     knl_buf_wait_t temp_stat;
     date_t req_start_time = cm_monotonic_now(); // UB-stats
+    date_t last_time = 0;
+    status_t ret;
 
     session->ub_page_req_kind = (uint8)UB_PAGE_REQ_LOCAL_HIT; // UB-stats
     session->ub_req_gbp_lock_mode = OG_INVALID_ID8; // UB-stats
     session->ub_req_gbp_lock_us = 0; // UB-stats
     session->ub_req_reload_wait_us = 0; // UB-stats
     session->ub_req_readonly_wait_us = 0; // UB-stats
-
     stats_buf_init(session, &temp_stat);
-    date_t last_time = 0;
 
     for (;;) {
+        /* -------- wait until DCS can serve this page -------- */
         if (!dtc_dcs_readable(session, ra->page_id)) {
             if (last_time + DCS_LOG_LIMIT_INTERVAL * MICROSECS_PER_MILLISEC <= KNL_NOW(session)) {
                 last_time = KNL_NOW(session);
@@ -520,43 +634,49 @@ status_t dtc_read_page(knl_session_t *session, buf_read_assist_t *ra)
             continue;
         }
 
+        /* -------- latch / allocate local ctrl -------- */
         if (!dtc_buf_prepare_ctrl(session, ra, &ctrl)) {
             return OG_SUCCESS;
         }
 
+        /* -------- resolve ownership (A/B/C/D) -------- */
         if (dtc_buf_try_local(session, ra, ctrl)) {
-            if (session->kernel->attr.enable_ubsmem && ctrl->is_in_gbp == OG_TRUE &&
-                ctrl->shmem_page_meta == NULL) {
-                OG_LOG_RUN_INF("[DTC-GBP_BUF][%u-%u] page is in gbp, but remote address is null in local node.",
-                    ra->page_id.file, ra->page_id.page);
+            /* A: local lock hit */
+        } else if (dtc_buf_give_up_try(session, ra, ctrl)) {
+            /* B: ENTER_PAGE_TRY — caller accepts miss */
+            return OG_SUCCESS;
+        } else if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
+            /*
+             * C: UB mapping present. Skip try_remote this round.
+             * finish -> check_local_page: still-this-gen holds gbp lock;
+             * retired gen clears local only and returns EAGAIN.
+             */
+        } else {
+            /* D: cold miss */
+            session->ub_page_req_kind = (uint8)UB_PAGE_REQ_OLD_ROUTE; // UB-stats
+            if (!dtc_buf_try_remote(session, ra, ctrl)) {
+                cm_sleep(DCS_RESEND_MSG_INTERVAL);
+                continue;
             }
-            break;
         }
 
-        if (dtc_buf_give_up_try(session, ra, ctrl)) {
+        /* -------- finish: disk load / gbp check+hold / reload -------- */
+        /* RBP NO_READ validity must see the ctrl after local/DCS resolution. */
+        ra->rbp_keep_local = dtc_rbp_local_page_valid_for_no_read(session, ra, ctrl);
+        ret = dtc_buf_finish(session, ra, ctrl, &temp_stat); // UB-stats
+        if (ret == OG_SUCCESS) {
+            if (session->kernel->attr.enable_ubsmem) { // UB-stats
+                dtc_read_page_record_stat(session, cm_monotonic_now() - req_start_time); // UB-stats
+            } // UB-stats
             return OG_SUCCESS;
         }
 
-        // lock mode uncampatiable
-        if (session->kernel->attr.enable_ubsmem && ctrl->shmem_page_meta != NULL) {
-            break;
+        /* -------- only eviction-reuse EAGAIN → remaster; else other condition return -------- */
+        if (dtc_read_page_retry_after_eagain(session, ctrl)) {
+            continue;
         }
-
-        session->ub_page_req_kind = (uint8)UB_PAGE_REQ_OLD_ROUTE; // UB-stats
-        if (dtc_buf_try_remote(session, ra, ctrl)) {
-            break;
-        }
-        cm_sleep(DCS_RESEND_MSG_INTERVAL);
+        return ret;
     }
-
-    /* Evaluate after local/DCS resolution, not before it, so the checked page is the final ctrl body. */
-    ra->rbp_keep_local = dtc_rbp_local_page_valid_for_no_read(session, ra, ctrl);
-
-    status_t ret = dtc_buf_finish(session, ra, ctrl, &temp_stat); // UB-stats
-    if (session->kernel->attr.enable_ubsmem && ret == OG_SUCCESS) { // UB-stats
-        dtc_read_page_record_stat(session, cm_monotonic_now() - req_start_time); // UB-stats
-    } // UB-stats
-    return ret; // UB-stats
 }
 
 status_t dtc_get_exclusive_owner_pages(knl_session_t *session, buf_ctrl_t **ctrl_array, buf_ctrl_t *ctrl, uint32 count)

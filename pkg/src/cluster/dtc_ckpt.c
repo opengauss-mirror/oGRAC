@@ -608,13 +608,11 @@ status_t dcs_ckpt_remote_edp_prepare(knl_session_t *session, ckpt_context_t *ogx
                 continue;
             }
             if (gbp_result == CKPT_GBP_PREPARE_SKIP) {
+                /* Retired generation already dropped from local ckpt; do not flush or clean as EDP. */
                 buf_unlatch_page(session, ctrl);
-                if (!dtc_add_to_edp_group(session, &ogx->remote_edp_clean_group, OG_CKPT_GROUP_SIZE(session), page_id,
-                    gbp_ckpt_lsn)) {
-                    i--;
-                    SWAP(edp_page_info_t, group->pages[i], group->pages[count - 1]);
-                    count--;
-                }
+                i--;
+                SWAP(edp_page_info_t, group->pages[i], group->pages[count - 1]);
+                count--;
                 continue;
             }
             if (gbp_result == CKPT_GBP_PREPARE_ERROR) {

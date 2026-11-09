@@ -62,7 +62,8 @@ typedef struct st_msg_page_req {
     // retrieve from master's global resources, so lets pass it to the owner by msg first
     remote_page_info_t master_shmem_page_info;
     uint8 gbp_owner_id;  // the node whose UBSM segment hosts the GBP slot (normally master_id)
-    uint8 reserved_gbp[7];
+    uint8 gbp_pad[3];
+    uint32 gbp_slot_generation; /* reservation generation; 0 is not a published generation */
     uint64 shmem_page_meta_off;                // offset from remote_sga->remote_buf_addr[gbp_owner_id]
     drc_page_gdp_move_action_type gbp_to_lbp;  // whether master needs to move page from GBP to LBP
 } msg_page_req_t;
@@ -174,7 +175,8 @@ typedef struct st_msg_ack_owner {
     uint8 action;
     uint8 req_mode;
     uint8 gbp_owner_id;
-    uint8 reserved_gbp[7];
+    uint8 gbp_pad[3];
+    uint32 gbp_slot_generation;
     uint64 shmem_page_meta_off;
 } msg_ack_owner_t;
 
@@ -184,6 +186,7 @@ typedef struct st_msg_pg_ack_ld {
     atomic_t master_lsn;
     knl_scn_t scn;
     uint64 req_version;
+    uint64 evict_flush_lsn; /* post-eviction durable head_lsn; 0 = normal grant */
 } msg_pg_ack_ld_t;
 
 typedef struct st_msg_ask_page_ack {
@@ -194,13 +197,16 @@ typedef struct st_msg_ask_page_ack {
     uint64 req_version;
     uint64 edp_map;
     uint8 gbp_owner_id;
-    uint8 reserved_gbp[7];
+    uint8 gbp_pad[3];
+    uint32 gbp_slot_generation;
     uint64 shmem_page_meta_off;
 } msg_ask_page_ack_t;
 
 typedef struct st_msg_edpinfo_req {
     mes_message_head_t head;
     page_id_t page_id;
+    /* If non-zero, master raises buf_res->lsn to MAX(lsn, raise_lsn) before returning edpinfo. */
+    uint64 raise_lsn;
 } msg_edpinfo_req_t;
 
 typedef struct st_msg_edpinfo_ack {
@@ -280,6 +286,16 @@ bool32 dcs_local_page_usable(knl_session_t *session, buf_ctrl_t *ctrl, latch_mod
 status_t dcs_request_page(knl_session_t *session, buf_ctrl_t *ctrl, page_id_t page_id, drc_lock_mode_e mode);
 
 status_t dcs_request_edpinfo(knl_session_t *session, page_id_t page_id, drc_edp_info_t *edp_info);
+/*
+ * Cluster ckpt guard from page master:
+ * - barrier_lsn: buf_res->lsn (0 if none)
+ * - is_in_gbp: while true, baseline flush without mapping is forbidden
+ */
+status_t dcs_gbp_get_page_ckpt_guard(knl_session_t *session, page_id_t page_id, uint64 *barrier_lsn, bool32 *is_in_gbp);
+/* Compat: barrier lsn only. */
+status_t dcs_gbp_get_page_barrier_lsn(knl_session_t *session, page_id_t page_id, uint64 *barrier_lsn);
+/* Raise disk-proven floor on page master (kept for MES path; finish no longer calls it). */
+status_t dcs_gbp_raise_page_barrier_lsn(knl_session_t *session, page_id_t page_id, uint64 lsn);
 
 // after checkpoint, notify all old version in other instance to be released
 status_t dcs_clean_edp(knl_session_t *session, ckpt_context_t *ogx);
