@@ -1157,6 +1157,25 @@ static status_t sql_build_subselect_path_internal(plan_assist_t *parent_pa, sql_
     return OG_SUCCESS;
 }
 
+static bool32 sql_get_query_limit_rows(sql_query_t *query, int64 *limit_rows)
+{
+    expr_tree_t *limit = (expr_tree_t *)query->limit.count;
+
+    if (limit == NULL || limit->root == NULL || limit->root->type != EXPR_NODE_CONST) {
+        return OG_FALSE;
+    }
+
+    if (limit->root->value.type == OG_TYPE_INTEGER) {
+        *limit_rows = (int64)limit->root->value.v_int;
+    } else if (limit->root->value.type == OG_TYPE_BIGINT) {
+        *limit_rows = limit->root->value.v_bigint;
+    } else {
+        return OG_FALSE;
+    }
+
+    return (*limit_rows > 0) ? OG_TRUE : OG_FALSE;
+}
+
 static status_t sql_build_subselect_single_query(plan_assist_t *parent_pa, sql_table_t *table,
     join_tbl_bitmap_t *table_ids, sql_query_t *query, sql_join_node_t *jnode)
 {
@@ -1197,6 +1216,14 @@ static status_t sql_build_subselect_single_query(plan_assist_t *parent_pa, sql_t
         jnode->cost.card += pa.tables[0]->card;
         jnode->cost.cost += pa.tables[0]->cost;
         jnode->cost.startup_cost += pa.tables[0]->startup_cost;
+    }
+
+    /* a derived table with a constant LIMIT n produces at most n rows */
+    int64 limit_rows = 0;
+
+    if (jnode->cost.card > 0 && sql_get_query_limit_rows(query, &limit_rows) &&
+        jnode->cost.card > (double)limit_rows) {
+        jnode->cost.card = (double)limit_rows;
     }
 
     OGSQL_RESTORE_STACK(stmt);
