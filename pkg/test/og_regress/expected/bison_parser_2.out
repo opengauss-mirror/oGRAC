@@ -26,7 +26,7 @@ SQL> create tablespace tmp_tablespace datafile 'tmp_tablespace.dbf' size 10M all
 OG-00101, Capability: create space all in memory not supported
 SQL> create tablespace tmp_tablespace datafile 'tmp_tablespace.dbf' size 10M nologging all in memory; --error
 
-OG-00601, [1:96]Sql syntax error: key word expected but all found
+OG-00601, [1:83]Sql syntax error: key word expected but all found
 SQL> create tablespace tmp_tablespace datafile 'tmp_tablespace.dbf' size 10M encryption; --error
 
 OG-00601, [1:73]Sql syntax error: unsupport encrypt space
@@ -56,7 +56,7 @@ Succeed.
 
 SQL> create tablespace tmp_tablespace extents 4K datafile 'tmp_tablespace.dbf' size 10M autooffline on extent autoallocate; --error
 
-OG-00601, [1:118]Sql syntax error: invalid extent clause
+OG-00601, [1:99]Sql syntax error: invalid extent clause
 SQL> 
 SQL> drop table if exists bison_t1;
 
@@ -177,7 +177,7 @@ SQL> create index bison_part_t1_idx1 on bison_part_t1(f1) local (
   4     (subpartition p11, subpartition p12),
   5 partition p2 (subpartition p21, subpartition p22)); --error
 
-OG-00601, [6:1]Sql syntax error: unexpected text format clause.
+OG-00601, [3:29]Sql syntax error: unexpected text format clause.
 SQL> 
 SQL> create index bison_part_t1_idx1 on bison_part_t1(f1) local (
   2 partition p1 initrans 50 pctfree 50 storage (initial 64K next 5K maxsize 1024K)
@@ -316,7 +316,7 @@ Succeed.
 
 SQL> create sequence seq8 cycle; -- error
 
-OG-00601, [1:27]Sql syntax error: ascending sequences that CYCLE must specify MAXVALUE
+OG-00601, [1:22]Sql syntax error: ascending sequences that CYCLE must specify MAXVALUE
 SQL> drop sequence if exists seq8;
 
 Succeed.
@@ -552,7 +552,7 @@ Succeed.
 
 SQL> create or replace view view_force(a, b) as select a, b from t_view1;
 
-OG-00843, [1:68]The table or view SYS.T_VIEW1 does not exist.
+OG-00843, [1:61]The table or view SYS.T_VIEW1 does not exist.
 SQL> create or replace force view view_force(a, b) as select a, b from t_view1;
 
 Succeed.
@@ -812,7 +812,7 @@ Succeed.
 SQL> 
 SQL> create profile profile_replace limit failed_login_attempts default failed_login_attempts unlimited; --error
 
-OG-00601, [1:99]Sql syntax error: keyword cannot appear more than once
+OG-00601, [1:68]Sql syntax error: keyword cannot appear more than once
 SQL> 
 SQL> -- ============================================
 SQL> -- CREATE DIRECTORY test cases
@@ -892,7 +892,7 @@ Succeed.
 
 SQL> create temporary table bison_t2 (a int, b int, primary key (b)) on commit preserve rows; --error
 
-OG-00601, [1:88]Sql syntax error: local temporary table name should start with '#'
+OG-00601, [1:24]Sql syntax error: local temporary table name should start with '#'
 SQL> create temporary table #bison_t2 (a int, b int, primary key (b)) on commit preserve rows;
 
 Succeed.
@@ -953,7 +953,7 @@ SQL> create table bison_t3 (a int, b default 'c'); --error
 OG-00601, [1:45]Sql syntax error: As-select clause expected
 SQL> create table bison_t3 (a int, b default 'c') as select 1, 'd'; --error, cannot specify datatype
 
-OG-00601, [1:62]Sql syntax error: may not specify column datatypes in CREATE TABLE
+OG-00601, [1:26]Sql syntax error: may not specify column datatypes in CREATE TABLE
 SQL> create table bison_t3 (a, b default 'c') as select 1, 'd';
 
 Succeed.
@@ -965,7 +965,7 @@ Succeed.
 
 SQL> create table bison_t3 as select 1, 'd'; --error
 
-OG-00601, [1:39]Sql syntax error: must name expression with a column alias
+OG-00601, [1:33]Sql syntax error: must name expression with a column alias
 SQL> create table bison_t3 as select 1 as a, 'd' as b;
 
 Succeed.
@@ -1100,7 +1100,7 @@ SQL> create table bison_t3
   7 c_date date
   8 )partition by range (c_number) subpartition by hash(c_int) partitions 3 subpartitions 2; --error
 
-OG-00601, [8:60]Sql syntax error: syntax error
+OG-00601, [8:60]Sql syntax error: SUBPARTITIONS or '(' expected but PARTITIONS found
 SQL> 
 SQL> create directory tmp_directory as './';
 
@@ -1123,7 +1123,7 @@ Succeed.
 SQL> create table bison_t3 (a int, b char(10)) organization external
   2 (type loader directory tmp_directory access parameters (records delimited by 'a') location '/home/ogracdba'); --error
 
-OG-00601, [2:81]Sql syntax error: syntax error
+OG-00601, [2:81]Sql syntax error: FIELDS expected but ')' found
 SQL> 
 SQL> drop table if exists bison_t3;
 
@@ -1198,7 +1198,7 @@ Succeed.
 
 SQL> grant role1, alter any index to xbin with grant option; --error
 
-OG-00601, [1:43]Sql syntax error: syntax error
+OG-00601, [1:43]Sql syntax error: ADMIN expected but GRANT found
 SQL> 
 SQL> revoke alter, insert on table bison_t1 from xbin cascade constraints;
 
@@ -1225,7 +1225,7 @@ SQL> revoke write, read on directory tmp_directory from xbin; --error
 OG-00601, [1:13]Sql syntax error: invalid privilege or role name
 SQL> revoke role1, alter any index from xbin cascade constraints; --error
 
-OG-00601, [1:41]Sql syntax error: syntax error
+OG-00601, [1:41]Sql syntax error: end of input or ',' expected but CASCADE found
 SQL> 
 SQL> drop role role1;
 
@@ -1279,7 +1279,7 @@ SQL> DECLARE
   9 END;
  10 /
 
-OG-00944, [12:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
 [6:1] PLC-00601 Sql syntax error: ; expected
 
 SQL> 
@@ -1347,11 +1347,11 @@ ID           NAME                                               AGE
 SQL> 
 SQL> INSERT INTO read_only_view VALUES (5, '钱七', 40);
 
-OG-00601, Sql syntax error: view operation INSERT must based on instead of trigger but current view has no trigger
+OG-00601, [1:13]Sql syntax error: view operation INSERT must based on instead of trigger but current view has no trigger
 SQL> 
 SQL> UPDATE read_only_view SET age = 31 WHERE id = 2;
 
-OG-00601, Sql syntax error: view operation UPDATE must based on instead of trigger but current view has no trigger
+OG-00601, [1:8]Sql syntax error: view operation UPDATE must based on instead of trigger but current view has no trigger
 SQL> 
 SQL> DELETE FROM read_only_view WHERE id = 2;
 
@@ -1485,7 +1485,7 @@ SQL> select snap_key from (bison_snapshot_probe as of timestamp(systimestamp) in
 OG-00601, [1:96]Sql syntax error: invalid table alias
 SQL> select snap_key from (bison_snapshot_probe as of timestamp(systimestamp)) as outer_snap; --error
 
-OG-00601, [1:75]Sql syntax error: syntax error
+OG-00601, [1:75]Sql syntax error: unexpected AS
 SQL> drop table bison_snapshot_probe purge;
 
 Succeed.

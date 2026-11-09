@@ -40,6 +40,7 @@
 #include "lines_cl.h"
 #include "ogsql_privilege.h"
 #include "cursor_cl.h"
+#include "scanner.h"
 
 static status_t plc_compile_select_into(pl_compiler_t *compiler, text_t *sql, word_t *word)
 {
@@ -795,6 +796,8 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
     status_t status = OG_ERROR;
     sql_text_t sql_text = { 0 };
     text_t parsed_sql = { 0 };
+    bison_source_map_t source_map;
+    bison_source_scope_t source_scope;
     sql_stmt_t *save_curr_stmt = stmt->session->current_stmt;
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     galist_t *save_input = (compiler == NULL) ? NULL : compiler->current_input;
@@ -805,6 +808,9 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
         OG_SRC_THROW_ERROR(*arg->loc, ERR_PLSQL_ILLEGAL_LINE_FMT, "missing bison static SQL input");
         return OG_ERROR;
     }
+
+    /* INTO removal preserves the original length and newlines, including its source offsets. */
+    bison_source_map_init(&source_map, stmt, arg->source_sql, *arg->loc);
 
     OG_RETURN_IFERR(sql_push(stmt, sizeof(sql_stmt_t), (void **)&sub_stmt));
     sql_init_stmt(stmt->session, sub_stmt, stmt->id);
@@ -832,13 +838,18 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
             break;
         }
         if (plc_rewrite_trigger_variants(compiler, arg->sql, &parsed_sql, *arg->loc,
-            PLC_TRIGGER_REWRITE_AS_PARAM) != OG_SUCCESS) {
+            PLC_TRIGGER_REWRITE_AS_PARAM, &source_map) != OG_SUCCESS) {
             pl_check_and_set_loc(*arg->loc);
             break;
         }
         sql_text.value = parsed_sql;
+        source_map.body_len = parsed_sql.len;
+        sql_text.loc = bison_source_map_location(&source_map, 0);
 
-        if (sql_parse_dml_directly(sub_stmt, arg->key_wid, &sql_text) != OG_SUCCESS) {
+        bison_source_scope_enter(&source_scope, sub_stmt, &sql_text.value, &source_map);
+        status_t parse_status = sql_parse_dml_directly(sub_stmt, arg->key_wid, &sql_text);
+        bison_source_scope_leave(&source_scope);
+        if (parse_status != OG_SUCCESS) {
             pl_check_and_set_loc(*arg->loc);
             sql_release_context(sub_stmt);
             break;

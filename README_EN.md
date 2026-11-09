@@ -24,6 +24,10 @@ For details about the oGRAC architecture, see [Architecture](https://docs.openga
 
 -   Programming language: C
 -   Compilation project: CMake (recommended) or Make
+-   Parser generator: GNU Bison **3.6.4 or later**. The SQL/PL grammars use `parse.error custom` and LAC. `sh build/local_install.sh prepare` and the development Dockerfiles share `build/prepare_bison.sh`: reuse a compatible generator, or download, verify and install GNU Bison 3.6.4 under `/usr/local`. CMake prefers `/usr/local/bin/bison` by default and still checks the minimum version; an explicit or cached `BISON_EXECUTABLE` takes precedence. Both single-node and dual-node packages require Bison when built, but installing a prebuilt database package does not.
+
+With the other build dependencies already installed, run `bash build/prepare_bison.sh` from the repository root to prepare only Bison. For an offline source archive, use `BISON_SOURCE_ARCHIVE=/path/to/bison-3.6.4.tar.xz bash build/prepare_bison.sh`; the fixed SHA-256 check still applies. Failures propagate out of `prepare` instead of reporting success. The default installation requires write access to `/usr/local` and leaves `/usr/bin/bison` unchanged. For another destination, set `BISON_INSTALL_PREFIX` and configure CMake with `-DBISON_EXECUTABLE=/that/directory/bin/bison`. Update this CMake variable explicitly if an existing cache still selects an older executable; `bison --version` reports the executable selected by the current `PATH`.
+
 -   Directories:
 
 |Directory  | Description |

@@ -9,7 +9,7 @@ Succeed.
 
 SQL> select '1234'::nchar varying; --error
 
-OG-00601, [1:29]Sql syntax error: the column size must be specified
+OG-00601, [1:16]Sql syntax error: the column size must be specified
 SQL> alter system set use_bison_parser = false;
 
 Succeed.
@@ -28,7 +28,7 @@ Succeed.
 
 SQL> select '1234'::nchar varying; --error (must be reparsed, not served from the native-mode cache)
 
-OG-00601, [1:29]Sql syntax error: the column size must be specified
+OG-00601, [1:16]Sql syntax error: the column size must be specified
 SQL> alter system set use_bison_parser = false;
 
 Succeed.

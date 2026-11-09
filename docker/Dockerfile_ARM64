@@ -30,6 +30,12 @@ RUN yum install -y \
     xz flex unixODBC-devel unixODBC libasan rpcgen numactl numactl-devel \
     sudo --skip-broken
 
+# Build from the repository root; upgrade the generator only when necessary.
+COPY build/prepare_bison.sh /tmp/prepare_bison.sh
+RUN yum install -y m4 tar xz \
+    && bash /tmp/prepare_bison.sh && rm -f /tmp/prepare_bison.sh
+ENV PATH=/usr/local/bin:${PATH}
+
 # lcov 在部分 openEuler 22.03 软件源中不可用，与大包一起装会被 --skip-broken 静默跳过。
 # 单独安装并允许失败；覆盖率报告需要 lcov，缺失时自动跳过，不影响构建与测试。
 RUN yum install -y lcov || echo "[WARN] lcov unavailable, coverage report will be skipped"

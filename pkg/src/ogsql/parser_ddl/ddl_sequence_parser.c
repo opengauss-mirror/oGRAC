@@ -1019,6 +1019,31 @@ static status_t og_apply_sequence_option(knl_sequence_def_t *sequence_def, creat
     return OG_SUCCESS;
 }
 
+/* Match the shared verifier's MINVALUE, MAXVALUE, CACHE, then CYCLE error order.
+ * For a conflict, point at the option which completes the conflicting pair. */
+static void og_set_sequence_error_loc(knl_sequence_def_t *def, galist_t *seq_opts)
+{
+    createseq_opt_type first = CREATESEQ_CYCLE_OPT;
+    createseq_opt_type second = CREATESEQ_CYCLE_OPT;
+    if (def->is_minval_set && def->is_nominval_set) {
+        first = CREATESEQ_MINVALUE_OPT;
+        second = CREATESEQ_NOMINVALUE_OPT;
+    } else if (def->is_maxval_set && def->is_nomaxval_set) {
+        first = CREATESEQ_MAXVALUE_OPT;
+        second = CREATESEQ_NOMAXVALUE_OPT;
+    } else if (def->is_cache_set && def->is_nocache_set) {
+        first = CREATESEQ_CACHE_OPT;
+        second = CREATESEQ_NOCACHE_OPT;
+    }
+    for (uint32 i = seq_opts == NULL ? 0 : seq_opts->count; i > 0; i--) {
+        createseq_opt *opt = (createseq_opt *)cm_galist_get(seq_opts, i - 1);
+        if (opt->type == first || opt->type == second) {
+            cm_try_set_error_loc(opt->loc);
+            return;
+        }
+    }
+}
+
 static status_t og_apply_sequence_options(knl_sequence_def_t *sequence_def, galist_t *seq_opts, bool32 allow_restart)
 {
     createseq_opt *opt = NULL;
@@ -1029,7 +1054,11 @@ static status_t og_apply_sequence_options(knl_sequence_def_t *sequence_def, gali
 
     for (uint32 i = 0; i < seq_opts->count; i++) {
         opt = (createseq_opt *)cm_galist_get(seq_opts, i);
-        OG_RETURN_IFERR(og_apply_sequence_option(sequence_def, opt, allow_restart));
+        status_t status = og_apply_sequence_option(sequence_def, opt, allow_restart);
+        if (status != OG_SUCCESS) {
+            cm_try_set_error_loc(opt->loc);
+            return status;
+        }
     }
 
     return OG_SUCCESS;
@@ -1059,9 +1088,11 @@ status_t og_parse_create_sequence(sql_stmt_t *stmt, knl_sequence_def_t **def, na
     status = og_apply_sequence_options(sequence_def, seq_opts, OG_FALSE);
     OG_RETURN_IFERR(status);
 
-    // Check parameter relations
     status = sql_check_sequence_parameters_relation(stmt, sequence_def);
-    OG_RETURN_IFERR(status);
+    if (status != OG_SUCCESS) {
+        og_set_sequence_error_loc(sequence_def, seq_opts);
+        return status;
+    }
 
     // Format sequence
     status = sql_format_sequence(stmt, sequence_def);
@@ -1096,7 +1127,10 @@ status_t og_parse_alter_sequence(sql_stmt_t *stmt, knl_sequence_def_t **def, nam
     OG_RETURN_IFERR(status);
 
     status = sql_check_sequence_conflict_parameters(stmt, sequence_def);
-    OG_RETURN_IFERR(status);
+    if (status != OG_SUCCESS) {
+        og_set_sequence_error_loc(sequence_def, seq_opts);
+        return status;
+    }
 
     if (sql_parse_check_param(stmt, sequence_def) != OG_SUCCESS) {
         sql_check_user_priv(stmt, &sequence_def->user);

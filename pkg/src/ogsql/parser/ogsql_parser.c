@@ -31,6 +31,7 @@
 #include "pl_executor.h"
 #include "ogsql_audit.h"
 #include "dml_executor.h"
+#include "scanner.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -563,14 +564,18 @@ static status_t sql_parse_pl_bison(sql_stmt_t *stmt)
 static status_t sql_reform_pl_text_bison(sql_stmt_t *stmt, text_t *body, source_location_t loc, int32 text_shift)
 {
     sql_text_t reform_sql = { 0 };
+    bison_source_map_t source_map;
+    bison_source_scope_t source_scope;
     uint32 buf_len = body->len + (uint32)strlen("begin\n") + (uint32)strlen(";\nend;\n/");
     char *buffer = NULL;
     status_t status;
 
+    bison_source_map_init(&source_map, stmt, body, loc);
+    source_map.prefix_len = (uint32)strlen("begin\n");
     OG_RETURN_IFERR(sql_push(stmt, buf_len, (void **)&buffer));
     reform_sql.str = buffer;
     reform_sql.len = 0;
-    reform_sql.loc = loc;
+    reform_sql.loc = bison_source_map_location(&source_map, source_map.prefix_len);
     reform_sql.implicit = OG_FALSE;
 
     cm_concat_string((text_t *)&reform_sql, buf_len, "begin\n");
@@ -579,7 +584,9 @@ static status_t sql_reform_pl_text_bison(sql_stmt_t *stmt, text_t *body, source_
 
     stmt->is_reform_call = OG_TRUE;
     stmt->text_shift = text_shift;
+    bison_source_scope_enter(&source_scope, stmt, &reform_sql.value, &source_map);
     status = sql_parse_pl_bison_text(stmt, &reform_sql);
+    bison_source_scope_leave(&source_scope);
     stmt->session->sql_audit.sql = sql_current_parse_text(stmt)->value;
     return status;
 }
@@ -592,10 +599,9 @@ static status_t sql_reform_call_bison(sql_stmt_t *stmt, word_t *leader)
         .str = origin_sql->str + body_offset,
         .len = origin_sql->len - body_offset
     };
-    source_location_t loc = {
-        .line = 0,
-        .column = 1
-    };
+    bison_source_map_t source_map;
+    bison_source_map_init(&source_map, stmt, &origin_sql->value, origin_sql->loc);
+    source_location_t loc = bison_source_map_location(&source_map, body_offset);
 
     return sql_reform_pl_text_bison(stmt, &body, loc, (int32)body_offset - SQL_REFORM_CALL_HEAD_SIZE);
 }

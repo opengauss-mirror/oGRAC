@@ -2237,4 +2237,424 @@ drop table if exists bison_pl_src;
 drop table if exists bison_pl_type_t;
 drop table if exists bison_pl_t;
 
+-- Bison diagnostics: preserve the original failure and clear it for the next statement.
+
+-- Missing right operand in an SQL expression.
+
+SELECT 1 + FROM sys_dummy;
+
+SELECT 1 FROM sys_dummy;
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Missing SQL WHERE condition.
+
+SELECT 1 FROM sys_dummy WHERE ;
+
+SELECT 1 FROM sys_dummy;
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Propagate the error from a declaration default expression.
+
+DECLARE
+    v INTEGER := 1 + ;
+BEGIN
+    NULL;
+END;
+/
+
+SELECT 1 FROM sys_dummy;
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Propagate the error from a parenthesized FOR query.
+
+BEGIN
+    FOR j IN (50) LOOP
+        NULL;
+    END LOOP;
+END;
+/
+
+SELECT 1 FROM sys_dummy;
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Preserve the nested SQL error in an IF condition.
+
+BEGIN
+    IF 1 + THEN
+        NULL;
+    END IF;
+END;
+/
+
+SELECT 1 FROM sys_dummy;
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Report an invalid array subscript once through assignment parsing.
+
+DECLARE
+    a INT[];
+    x INT;
+BEGIN
+    x := a[0];
+END;
+/
+
+SELECT 1 FROM sys_dummy;
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Keep a new grammar diagnostic when THEN is missing.
+
+BEGIN
+    IF 1 = 1
+        NULL;
+    END IF;
+END;
+/
+
+SELECT 1 FROM sys_dummy;
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Preserve the nested SQL error in a call argument.
+
+BEGIN
+    dbe_output.print_line(1 + );
+END;
+/
+
+SELECT 1 FROM sys_dummy;
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Preserve a SQL lexer diagnostic for an empty quoted identifier.
+
+SELECT "" FROM sys_dummy;
+
+SELECT 1 FROM sys_dummy;
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Preserve a lexer diagnostic through a declaration default expression.
+
+DECLARE
+    x INT := "";
+BEGIN
+    NULL;
+END;
+/
+
+SELECT 1 FROM sys_dummy;
+
+BEGIN
+    NULL;
+END;
+/
+
+-- A failed expression probe must not poison a successful condition assignment.
+
+DECLARE
+    b BOOLEAN;
+BEGIN
+    b := 1 = 1;
+    IF b THEN
+        NULL;
+    END IF;
+END;
+/
+
+-- Exercise Bison source locations and parameter mappings with isolated objects.
+drop trigger if exists BISON_LOC_P2_TRG_EXPR;
+drop trigger if exists BISON_LOC_P2_TRG_SQL;
+drop procedure if exists BISON_LOC_P2_PROC;
+drop table if exists BISON_LOC_P2_T;
+create table BISON_LOC_P2_T(id int);
+set serveroutput on;
+
+-- Map a single-line DEFAULT fragment back to its original semicolon.
+
+DECLARE v INT := 1 + ; BEGIN NULL; END;
+/
+
+-- Verify SQL recovery in the same session.
+
+SELECT 1 FROM sys_dummy;
+
+-- Verify PL recovery in the same session.
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Map multiline expressions inside nested blocks to the original source.
+
+BEGIN
+    DECLARE
+        v INTEGER :=
+            1 +
+            ;
+    BEGIN NULL; END;
+END;
+/
+
+-- Verify SQL recovery in the same session.
+
+SELECT 1 FROM sys_dummy;
+
+-- Verify PL recovery in the same session.
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Keep stored procedure locations when SELECT INTO is rewritten.
+
+CREATE PROCEDURE BISON_LOC_P2_PROC AS
+    v INT;
+BEGIN
+    SELECT 1 + INTO v FROM sys_dummy;
+END;
+/
+
+-- Verify SQL recovery in the same session.
+
+SELECT 1 FROM sys_dummy;
+
+-- Verify PL recovery in the same session.
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Map an expression after rewriting a trigger :new reference.
+
+CREATE TRIGGER BISON_LOC_P2_TRG_EXPR
+BEFORE INSERT ON BISON_LOC_P2_T
+FOR EACH ROW
+BEGIN
+    :new.id := :new.id + ;
+END;
+/
+
+-- Verify SQL recovery in the same session.
+
+SELECT 1 FROM sys_dummy;
+
+-- Verify PL recovery in the same session.
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Map static SQL after rewriting a trigger :new reference.
+
+CREATE TRIGGER BISON_LOC_P2_TRG_SQL
+BEFORE INSERT ON BISON_LOC_P2_T
+FOR EACH ROW
+BEGIN
+    INSERT INTO BISON_LOC_P2_T VALUES (:new.id + );
+END;
+/
+
+-- Verify SQL recovery in the same session.
+
+SELECT 1 FROM sys_dummy;
+
+-- Verify PL recovery in the same session.
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Keep CRLF line boundaries and UTF-8 byte columns in error locations.
+
+DECLARE
+    x INT;
+BEGIN
+    x := LENGTH('中文') + ;
+END;
+/
+
+-- Verify SQL recovery in the same session.
+
+SELECT 1 FROM sys_dummy;
+
+-- Verify PL recovery in the same session.
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Preserve the original token location through a top-level CALL wrapper.
+
+CALL dbe_output.print_line(1 + );
+
+-- Verify SQL recovery in the same session.
+
+SELECT 1 FROM sys_dummy;
+
+-- Verify PL recovery in the same session.
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Locate multiline SQL EOF after the client submits the slash-delimited buffer.
+
+SELECT
+1 +
+/
+
+-- Verify SQL recovery in the same session.
+
+SELECT 1 FROM sys_dummy;
+
+-- Verify PL recovery in the same session.
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Preserve binding names across static SQL, expressions, conditions and calls.
+
+BEGIN
+    EXECUTE IMMEDIATE 'declare a int; begin
+        select :x - :y into a from sys_dummy;
+        dbe_output.print_line(a);
+        a := :y - :x;
+        dbe_output.print_line(a);
+        if :x > :y then
+            dbe_output.print_line(:x - :y);
+        end if;
+    end;' USING 47, 13;
+END;
+/
+
+-- Preserve binding names when expressions precede static SQL.
+
+BEGIN
+    EXECUTE IMMEDIATE 'declare a int; begin
+        a := :x - :y;
+        dbe_output.print_line(a);
+        select :y - :x into a from sys_dummy;
+        dbe_output.print_line(a);
+    end;' USING 47, 13;
+END;
+/
+
+-- Keep an independent dynamic block in its own parameter namespace.
+
+BEGIN
+    EXECUTE IMMEDIATE 'declare a int; begin
+        a := :x - :y;
+        execute immediate ''begin dbe_output.print_line(:x - :y); end;'' using :y, :x;
+        dbe_output.print_line(:x - :y);
+    end;' USING 47, 13;
+END;
+/
+
+-- Keep the EXECUTE location and the inner SQL location for an unterminated string.
+
+BEGIN
+    EXECUTE IMMEDIATE 'SELECT ''broken';
+END;
+/
+
+-- Verify SQL recovery in the same session.
+
+SELECT 1 FROM sys_dummy;
+
+-- Verify PL recovery in the same session.
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Keep the EXECUTE location and the inner SQL location for an unterminated comment.
+
+BEGIN
+    EXECUTE IMMEDIATE 'SELECT 1 /* broken';
+END;
+/
+
+-- Verify SQL recovery in the same session.
+
+SELECT 1 FROM sys_dummy;
+
+-- Verify PL recovery in the same session.
+
+BEGIN
+    NULL;
+END;
+/
+
+-- Verify custom expected-token diagnostics and same-session recovery.
+SELECT 1 FROM sys_dummy FOR UPDATE WAIT;
+SELECT 1 + NULLS FIRST FROM sys_dummy;
+SELECT 1 + ERROR ON EMPTY FROM sys_dummy;
+BEGIN
+    NULL
+END;
+/
+DECLARE v INT := 0; BEGIN v := v + 1; dbe_output.print_line(v); END;
+/
+SELECT 1 FROM sys_dummy;
+
+-- LAC must accept a quoted declaration at a stored-body boundary.
+CREATE PROCEDURE BISON_LAC_QUOTED_PROC AS
+    "v" NUMBER := 7;
+BEGIN
+    dbe_output.print_line("v");
+END;
+/
+CALL BISON_LAC_QUOTED_PROC();
+DROP PROCEDURE BISON_LAC_QUOTED_PROC;
+
+drop trigger if exists BISON_LOC_P2_TRG_EXPR;
+drop trigger if exists BISON_LOC_P2_TRG_SQL;
+drop procedure if exists BISON_LOC_P2_PROC;
+drop table if exists BISON_LOC_P2_T;
+set serveroutput off;
+
 alter system set use_bison_parser = false;

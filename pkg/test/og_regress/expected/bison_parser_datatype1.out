@@ -180,10 +180,10 @@ OG-01304, [1:19]Data type 'CLOB' is not supported
 SQL> 
 SQL> create table test_clob_array(c1 clob[]); --error
 
-OG-01365, [1:40]Datatype CLOB does not support array type
+OG-01365, [1:33]Datatype CLOB does not support array type
 SQL> create table test_clob_array(c1 clob[]); --error
 
-OG-01365, [1:40]Datatype CLOB does not support array type
+OG-01365, [1:33]Datatype CLOB does not support array type
 SQL> 
 SQL> create table test_clob4(c1 clob(10));
 
@@ -331,7 +331,7 @@ SQL> create table test_char3(
   5     c4 nvarchar2
   6 ); --error
 
-OG-00601, [7:1]Sql syntax error: the column size must be specified
+OG-00601, [2:4]Sql syntax error: the column size must be specified
 SQL> 
 SQL> create table test_char3(
   2     c1 national character varying(10),
@@ -364,7 +364,7 @@ SQL> create table test_char3(
   4     c3 nchar varying
   5 ); --error
 
-OG-00601, [6:1]Sql syntax error: the column size must be specified
+OG-00601, [2:4]Sql syntax error: the column size must be specified
 SQL> 
 SQL> create table test_char4(
   2     c1 national character,
@@ -467,14 +467,14 @@ SQL> select '1234'::nchar(5);
 
 SQL> select '1234'::nchar(5 char); --error
 
-OG-00601, [1:24]Sql syntax error: syntax error
+OG-00601, [1:24]Sql syntax error: ')' expected but CHAR found
 SQL> select '1234'::nchar(5 byte); --error
 
-OG-00601, [1:24]Sql syntax error: syntax error
+OG-00601, [1:24]Sql syntax error: ')' expected but BYTE found
 SQL> 
 SQL> select '1234'::varchar; --error
 
-OG-00601, [1:23]Sql syntax error: the column size must be specified
+OG-00601, [1:16]Sql syntax error: the column size must be specified
 SQL> select '1234'::varchar(5);
 
 '1234'::VARCHAR(5)
@@ -502,7 +502,7 @@ SQL> select '1234'::varchar(5 byte);
 SQL> 
 SQL> select '1234'::varchar2; --error
 
-OG-00601, [1:24]Sql syntax error: the column size must be specified
+OG-00601, [1:16]Sql syntax error: the column size must be specified
 SQL> select '1234'::varchar2(5);
 
 '1234'::VARCHAR2(5)
@@ -530,7 +530,7 @@ SQL> select '1234'::varchar2(5 byte);
 SQL> 
 SQL> select '1234'::nvarchar; --error
 
-OG-00601, [1:24]Sql syntax error: the column size must be specified
+OG-00601, [1:16]Sql syntax error: the column size must be specified
 SQL> select '1234'::nvarchar(5);
 
 '1234'::NVARCHAR(5)     
@@ -541,14 +541,14 @@ SQL> select '1234'::nvarchar(5);
 
 SQL> select '1234'::nvarchar(5 char); --error
 
-OG-00601, [1:27]Sql syntax error: syntax error
+OG-00601, [1:27]Sql syntax error: ')' expected but CHAR found
 SQL> select '1234'::nvarchar(5 byte); --error
 
-OG-00601, [1:27]Sql syntax error: syntax error
+OG-00601, [1:27]Sql syntax error: ')' expected but BYTE found
 SQL> 
 SQL> select '1234'::nvarchar2; --error
 
-OG-00601, [1:25]Sql syntax error: the column size must be specified
+OG-00601, [1:16]Sql syntax error: the column size must be specified
 SQL> select '1234'::nvarchar2(5);
 
 '1234'::NVARCHAR2(5)    
@@ -559,10 +559,10 @@ SQL> select '1234'::nvarchar2(5);
 
 SQL> select '1234'::nvarchar2(5 char); --error
 
-OG-00601, [1:28]Sql syntax error: syntax error
+OG-00601, [1:28]Sql syntax error: ')' expected but CHAR found
 SQL> select '1234'::nvarchar2(5 byte); --error
 
-OG-00601, [1:28]Sql syntax error: syntax error
+OG-00601, [1:28]Sql syntax error: ')' expected but BYTE found
 SQL> 
 SQL> select '1234'::national character;
 
@@ -582,10 +582,10 @@ SQL> select '1234'::national character(5);
 
 SQL> select '1234'::national character(5 char); --error
 
-OG-00601, [1:37]Sql syntax error: syntax error
+OG-00601, [1:37]Sql syntax error: ')' expected but CHAR found
 SQL> select '1234'::national character(5 byte); --error
 
-OG-00601, [1:37]Sql syntax error: syntax error
+OG-00601, [1:37]Sql syntax error: ')' expected but BYTE found
 SQL> 
 SQL> select '1234'::national char;
 
@@ -605,14 +605,14 @@ SQL> select '1234'::national char(5);
 
 SQL> select '1234'::national char(5 char); --error
 
-OG-00601, [1:32]Sql syntax error: syntax error
+OG-00601, [1:32]Sql syntax error: ')' expected but CHAR found
 SQL> select '1234'::national char(5 byte); --error
 
-OG-00601, [1:32]Sql syntax error: syntax error
+OG-00601, [1:32]Sql syntax error: ')' expected but BYTE found
 SQL> 
 SQL> select '1234'::national character varying; --error
 
-OG-00601, [1:42]Sql syntax error: the column size must be specified
+OG-00601, [1:16]Sql syntax error: the column size must be specified
 SQL> select '1234'::national character varying(5);
 
 '1234'::NATIONAL CHARACTER VARYING(5)
@@ -623,14 +623,14 @@ SQL> select '1234'::national character varying(5);
 
 SQL> select '1234'::national character varying(5 char); --error
 
-OG-00601, [1:45]Sql syntax error: syntax error
+OG-00601, [1:45]Sql syntax error: ')' expected but CHAR found
 SQL> select '1234'::national character varying(5 byte); --error
 
-OG-00601, [1:45]Sql syntax error: syntax error
+OG-00601, [1:45]Sql syntax error: ')' expected but BYTE found
 SQL> 
 SQL> select '1234'::national char varying; --error
 
-OG-00601, [1:37]Sql syntax error: the column size must be specified
+OG-00601, [1:16]Sql syntax error: the column size must be specified
 SQL> select '1234'::national char varying(5);
 
 '1234'::NATIONAL CHAR VARYING(5)
@@ -641,14 +641,14 @@ SQL> select '1234'::national char varying(5);
 
 SQL> select '1234'::national char varying(5 char); --error
 
-OG-00601, [1:40]Sql syntax error: syntax error
+OG-00601, [1:40]Sql syntax error: ')' expected but CHAR found
 SQL> select '1234'::national char varying(5 byte); --error
 
-OG-00601, [1:40]Sql syntax error: syntax error
+OG-00601, [1:40]Sql syntax error: ')' expected but BYTE found
 SQL> 
 SQL> select '1234'::nchar varying; --error
 
-OG-00601, [1:29]Sql syntax error: the column size must be specified
+OG-00601, [1:16]Sql syntax error: the column size must be specified
 SQL> select '1234'::nchar varying(5);
 
 '1234'::NCHAR VARYING(5)
@@ -659,10 +659,10 @@ SQL> select '1234'::nchar varying(5);
 
 SQL> select '1234'::nchar varying(5 char); --error
 
-OG-00601, [1:32]Sql syntax error: syntax error
+OG-00601, [1:32]Sql syntax error: ')' expected but CHAR found
 SQL> select '1234'::nchar varying(5 byte); --error
 
-OG-00601, [1:32]Sql syntax error: syntax error
+OG-00601, [1:32]Sql syntax error: ')' expected but BYTE found
 SQL> 
 SQL> create table char_test (char_col nvarchar2(50));
 

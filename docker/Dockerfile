@@ -33,6 +33,12 @@ RUN debuginfo-install -y libibverbs \
 
 RUN yum group install -y "Development Tools"
 
+# Build from the repository root so all images share the same Bison setup.
+COPY build/prepare_bison.sh /tmp/prepare_bison.sh
+RUN yum install -y m4 tar xz \
+    && bash /tmp/prepare_bison.sh && rm -f /tmp/prepare_bison.sh
+ENV PATH=/usr/local/bin:${PATH}
+
 RUN mkdir /tools
 WORKDIR /tools
 RUN wget --progress=bar:force -O FlameGraph-master.zip https://github.com/brendangregg/FlameGraph/archive/master.zip

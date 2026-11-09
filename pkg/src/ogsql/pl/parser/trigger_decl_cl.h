@@ -45,13 +45,15 @@ typedef enum en_plc_trigger_rewrite_mode {
     PLC_TRIGGER_REWRITE_AS_NAME
 } plc_trigger_rewrite_mode_t;
 
+struct st_bison_source_map;
+
 status_t plc_verify_trigger_modified_var(pl_compiler_t *compiler, plv_decl_t *decl);
 void plc_get_trig_decl_name(pl_compiler_t *compiler, text_t *out, word_t *word, bool32 *is_upper_case);
 status_t plc_add_trigger_decl(pl_compiler_t *compiler, uint32 stack_id, word_t *word, uint32 type,
     plv_decl_t **res_decl);
 status_t plc_compile_trigger_variant(pl_compiler_t *compiler, text_t *sql, word_t *word);
 status_t plc_rewrite_trigger_variants(pl_compiler_t *compiler, text_t *src, text_t *rewritten,
-    source_location_t loc, plc_trigger_rewrite_mode_t mode);
+    source_location_t loc, plc_trigger_rewrite_mode_t mode, struct st_bison_source_map *source_map);
 status_t plc_init_trigger_decls(pl_compiler_t *compiler);
 status_t plc_add_modified_new_cols(pl_compiler_t *compiler);
 

@@ -31,16 +31,16 @@ Succeed.
 SQL> -- Reject standalone parameter lists without a PL compilation context.
 SQL> (x int); --error
 
-OG-00601, [1:2]Sql syntax error: syntax error
+OG-00601, [1:2]Sql syntax error: SELECT or WITH or '(' expected but identifier found
 SQL> (x in int); --error
 
-OG-00601, [1:2]Sql syntax error: syntax error
+OG-00601, [1:2]Sql syntax error: SELECT or WITH or '(' expected but identifier found
 SQL> ((x int)); --error
 
-OG-00601, [1:3]Sql syntax error: syntax error
+OG-00601, [1:3]Sql syntax error: SELECT or WITH or '(' expected but identifier found
 SQL> ( /* gap */ x int); --error
 
-OG-00601, [1:13]Sql syntax error: syntax error
+OG-00601, [1:13]Sql syntax error: SELECT or WITH or '(' expected but identifier found
 SQL> (select 1 as probe_result from sys_dummy);
 
 PROBE_RESULT
@@ -88,17 +88,17 @@ SQL> insert into bison_t1 tbison_t1(sys.bison_t1.a, tbison_t1.b) values (1,'abc'
 
 SQL> insert into bison_t1 as values(sys.bison_t1.a, bison_t1.b) values (1,'abc'), (2, 'abc');
 
-OG-00601, [1:25]Sql syntax error: syntax error
+OG-00601, [1:25]Sql syntax error: unexpected VALUES
 SQL> insert into bison_t1 values(sys.bison_t1.a, bison_t1.b) values (1,'abc'), (2, 'abc'); --error
 
-OG-00601, [1:57]Sql syntax error: syntax error
+OG-00601, [1:57]Sql syntax error: unexpected VALUES
 SQL> insert into bison_t1(sys.bison_t1.a, bison_t2.b) values (1,'abc'), (2, 'abc'); --error
 
 OG-00601, [1:78]Sql syntax error: invalid column name
 SQL> 
 SQL> drop table bison_t2;
 
-OG-00843, [1:20]The table or view SYS.BISON_T2 does not exist.
+OG-00843, [1:12]The table or view SYS.BISON_T2 does not exist.
 SQL> create table bison_t2 (a int primary key, b int);
 
 Succeed.
@@ -296,7 +296,7 @@ SQL> insert into bison_t1 values (1,2,3) on duplicate key update (a, b) = (selec
 
 SQL> insert into bison_t1 values (1,2,3) on duplicate key update (a, b) = (1,2), c = 4; --error
 
-OG-00601, [1:71]Sql syntax error: syntax error
+OG-00601, [1:71]Sql syntax error: SELECT or WITH or '(' expected but number found
 SQL> 
 SQL> insert into bison_t1 values (1, 1, 1) returning a; --error
 
@@ -313,7 +313,7 @@ SQL> declare
   6 end;
   7 /
 
-OG-00944, [9:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
 [4:2] PLC-00601 Sql syntax error: unexpected returning columns occurs
 
 SQL> 
@@ -646,7 +646,7 @@ SQL> delete from bison_t1 where (a, b) in ((2), (3)); --error
 OG-00601, [1:47]Sql syntax error: not enough values
 SQL> delete from bison_t1 where (a, b) in (2,3); --error
 
-OG-00601, [1:39]Sql syntax error: syntax error
+OG-00601, [1:39]Sql syntax error: SELECT or WITH or '(' expected but number found
 SQL> delete from bison_t1 where (a, b) in (select 2); --error
 
 OG-00923, Values were not enough
@@ -852,7 +852,7 @@ SQL> delete from bison_t1 using bison_t1, bison_t2;
 SQL> 
 SQL> delete from bison_t1 using bison_t2 partition(p1), bison_t1 where a = 1;
 
-OG-00601, Sql syntax error: BISON_T2 is not a partition table
+OG-00601, [1:28]Sql syntax error: BISON_T2 is not a partition table
 SQL> 
 SQL> delete from bison_t1, bison_t2 using bison_t1 join bison_t2 where a = c;
 
@@ -895,7 +895,7 @@ OG-00606, Inconsistent datatypes, expected PLSQL INDEX TABLE - got BINARY_INTEGE
 SQL> 
 SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name (RETURNING varchar2) PATH '$.name', age varchar2 PATH '$.age')); --error
 
-OG-00601, [1:110]Sql syntax error: syntax error
+OG-00601, [1:110]Sql syntax error: unexpected '('
 SQL> 
 SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name for ordinality, age varchar2 PATH '$.age'));
 
@@ -908,7 +908,7 @@ NAME
 SQL> 
 SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name for ordinality, age varchar2('10abc') PATH '$.age')); --error
 
-OG-00601, [1:139]Sql syntax error: syntax error
+OG-00601, [1:139]Sql syntax error: number expected but string found
 SQL> 
 SQL> select name from json_table('{"name":"Messi", "age": 10}' format json, '$' default '1' on error COLUMNS(name varchar2 exists PATH '$.name' TRUE ON ERROR, age varchar2 exists PATH '$.age' TRUE ON ERROR));
 
@@ -1130,7 +1130,7 @@ SQL> delete from bison_t1 order by a desc offset 1 limit 1;
 SQL> 
 SQL> delete from bison_t1 order siblings by a desc limit 1 offset 1; --error
 
-OG-00601, [1:28]Sql syntax error: syntax error
+OG-00601, [1:22]Sql syntax error: unexpected ORDER SIBLINGS
 SQL> delete from bison_t1, bison_t2 using bison_t1, bison_t2 limit 1 offset 1;  --error
 
 OG-00601, [1:73]Sql syntax error: multi delete do not support limit
@@ -1766,7 +1766,7 @@ SQL> (SELECT
   6 START WITH manager_id IS NULL
   7 CONNECT BY PRIOR employee_id = manager_id) order siblings by employee_id;
 
-OG-00601, [7:50]Sql syntax error: syntax error
+OG-00601, [7:44]Sql syntax error: unexpected ORDER SIBLINGS
 SQL> 
 SQL> select * from bison_t1 order siblings by a; -- error
 
@@ -2026,7 +2026,7 @@ SQL> SELECT
   6 GROUP BY GROUPING SETS ( grouping sets
   7     (region, product_category));
 
-OG-00601, [6:35]Sql syntax error: syntax error
+OG-00601, [6:35]Sql syntax error: unexpected SETS
 SQL> 
 SQL> 
 SQL> SELECT 
@@ -2548,7 +2548,7 @@ A
 
 SQL> select a from bison_t1 for update union select c from bison_t2 order by a;
 
-OG-00601, [1:35]Sql syntax error: syntax error
+OG-00601, [1:35]Sql syntax error: unexpected UNION
 SQL> 
 SQL> 
 SQL> select SQL_CALC_FOUND_ROWS * from bison_t1 limit 2;
@@ -2672,7 +2672,7 @@ A
 SQL> 
 SQL> select * from (with tmp as (select c from bison_t2) select * from tmp), tmp;
 
-OG-00843, The table or view SYS.TMP does not exist.
+OG-00843, [1:73]The table or view SYS.TMP does not exist.
 SQL> 
 SQL> with tmp as (with tmp1 as (select * from bison_t1) select * from tmp1) select * from tmp;
 
@@ -2895,13 +2895,13 @@ Succeed.
 SQL> 
 SQL> create temporary table #temp_bison_t1 (a int);
 
-OG-00601, [1:46]Sql syntax error: parameter LOCAL_TEMPORARY_TABLE_ENABLED is false, can't create local temporary table
+OG-00601, [1:24]Sql syntax error: parameter LOCAL_TEMPORARY_TABLE_ENABLED is false, can't create local temporary table
 SQL> drop table #temp_bison_t1;
 
-OG-00843, [1:26]The table or view SYS.#TEMP_BISON_T1 does not exist.
+OG-00843, [1:12]The table or view SYS.#TEMP_BISON_T1 does not exist.
 SQL> drop temporary table #temp_bison_t1;
 
-OG-00843, [1:36]The table or view SYS.#TEMP_BISON_T1 does not exist.
+OG-00843, [1:22]The table or view SYS.#TEMP_BISON_T1 does not exist.
 SQL> 
 SQL> drop table if exists bison_t1;
 
@@ -2925,10 +2925,10 @@ Succeed.
 
 SQL> drop table bison_t1 cascade;
 
-OG-00843, [1:28]The table or view SYS.BISON_T1 does not exist.
+OG-00843, [1:12]The table or view SYS.BISON_T1 does not exist.
 SQL> drop table bison_t1 cascade constraints;
 
-OG-00843, [1:40]The table or view SYS.BISON_T1 does not exist.
+OG-00843, [1:12]The table or view SYS.BISON_T1 does not exist.
 SQL> 
 SQL> drop table if exists bison_t1;
 
@@ -3064,7 +3064,7 @@ Succeed.
 
 SQL> drop function if exists fun1(int); --error
 
-OG-00601, [1:29]Sql syntax error: syntax error
+OG-00601, [1:29]Sql syntax error: end of input or '.' expected but '(' found
 SQL> 
 SQL> drop procedure if exists pro1;
 
@@ -3162,10 +3162,10 @@ OG-00130, Operation flashback table partition is not supported on BISON_T1
 SQL> 
 SQL> flashback table bison_t1 partition p1 to scn '10'; --error
 
-OG-00601, [1:42]Sql syntax error: syntax error
+OG-00601, [1:42]Sql syntax error: BEFORE expected but SCN found
 SQL> flashback table bison_t1 partition p1 to before drop rename to tbison_t2; --error
 
-OG-00601, [1:49]Sql syntax error: syntax error
+OG-00601, [1:49]Sql syntax error: TRUNCATE expected but DROP found
 SQL> 
 SQL> comment on table bison_t1 is 'test comment table';
 
@@ -3186,7 +3186,7 @@ Succeed.
 
 SQL> comment on column bison_t1.a is NULL; --error
 
-OG-00601, [1:33]Sql syntax error: syntax error
+OG-00601, [1:33]Sql syntax error: string expected but NULL found
 SQL> 
 SQL> drop table bison_t1;
 
@@ -3224,7 +3224,7 @@ Succeed.
 
 SQL> analyze index bison_t1_idx compute statistics for report; --error
 
-OG-00601, [1:47]Sql syntax error: syntax error
+OG-00601, [1:47]Sql syntax error: end of input expected but FOR found
 SQL> 
 SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog;
 
@@ -3240,7 +3240,7 @@ OG-00738, The database is already in the MOUNT state
 SQL> 
 SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' nologging undo tablespace tempfile 'a' size 10M system tablespace datafile 'st' size 128.6M sysaux tablespace datafile 'ast' size 128M default tablespace datafile 'ast' size 1M instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 archivelog MAXINSTANCES 5;
 
-OG-00601, [1:152]Sql syntax error: syntax error
+OG-00601, [1:152]Sql syntax error: unexpected number
 SQL> 
 SQL> create database clustered db1 user SYS IDENTIFIED by 'Huawei@123' instance node 0 nologging undo tablespace tempfile 'a' size 10M undo tablespace datafile 'b' size 10M temporary TABLESPACE TEMPFILE 'c' size 10M logfile ('logfile1' size 10M blocksize 512, 'logfile2' size 10M blocksize 512, 'logfile3' size 10M blocksize 512) node 0 nologging undo tablespace tempfile 'aa' size 10M undo tablespace datafile 'bb' size 10M temporary TABLESPACE TEMPFILE 'cc' size 10M logfile ('logfile11' size 10M blocksize 512, 'logfile21' size 10M blocksize 512, 'logfile31' size 10M blocksize 512) controlfile ('d', 'e') character set uft8 noarchivelog;
 
@@ -3449,7 +3449,7 @@ SQL> insert into func_res_test_bison(result) SELECT JSON_OBJECT(KEY 'name' is 'T
 
 SQL> insert into func_res_test_bison(result) SELECT JSON_OBJECT(KEY 'name' : 'Tim', KEY 'age' : 20); -- error
 
-OG-00601, [1:71]Sql syntax error: syntax error
+OG-00601, [1:71]Sql syntax error: unexpected ':'
 SQL> insert into func_res_test_bison(result) SELECT JSON_ARRAY(1,2,3,4);
 
 1 rows affected.
@@ -3473,7 +3473,7 @@ SQL> insert into func_res_test_bison(result)  select interval '22' year;
 
 SQL> insert into func_res_test_bison(result)  select interval '2022' year; --error
 
-OG-00674, [1:69]YEAR field exceeds the specified precision (2)
+OG-00674, [1:49]YEAR field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison(result)  select interval '2022' year(4);
 
 1 rows affected.
@@ -3484,17 +3484,17 @@ SQL> insert into func_res_test_bison(result)  select interval '22' year to year;
 
 SQL> insert into func_res_test_bison(result)  select interval '2022' year to year; --error
 
-OG-00674, [1:73]YEAR field exceeds the specified precision (2)
+OG-00674, [1:49]YEAR field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison(result)  select interval '2022' year(4) to year;
 
 1 rows affected.
 
 SQL> insert into func_res_test_bison(result)  select interval '22' year to MONTH; --error
 
-OG-00673, [1:71]Invalid interval text -- format error
+OG-00673, [1:49]Invalid interval text -- format error
 SQL> insert into func_res_test_bison(result)  select interval '2022-11' year to MONTH; --error
 
-OG-00674, [1:76]YEAR field exceeds the specified precision (2)
+OG-00674, [1:49]YEAR field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison(result)  select interval '2022-11' year(4) to MONTH;
 
 1 rows affected.
@@ -3513,7 +3513,7 @@ SQL> insert into func_res_test_bison(result)  select interval '11 22:05' day to 
 
 SQL> insert into func_res_test_bison(result)  select interval '100 10' day to hour; --error
 
-OG-00674, [1:74]DAY field exceeds the specified precision (2)
+OG-00674, [1:49]DAY field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison(result)  select interval '100 10' day(3) to hour;
 
 1 rows affected.
@@ -3570,7 +3570,7 @@ SQL> insert into func_res_test_bison(result) select X'5734567'; --error
 OG-00105, [1:48]Invalid format of hex
 SQL> insert into func_res_test_bison(result) select x'573456'; --error
 
-OG-00601, [1:49]Sql syntax error: syntax error
+OG-00601, [1:49]Sql syntax error: unexpected string
 SQL> 
 SQL> insert into func_res_test_bison(result) select 1::int;
 
@@ -3967,7 +3967,7 @@ SQL> insert into func_res_test_bison_off(result) SELECT JSON_OBJECT(KEY 'name' i
 
 SQL> insert into func_res_test_bison_off(result) SELECT JSON_OBJECT(KEY 'name' : 'Tim', KEY 'age' : 20); -- error
 
-OG-00601, [1:75]Sql syntax error: syntax error
+OG-00601, [1:75]Sql syntax error: unexpected ':'
 SQL> insert into func_res_test_bison_off(result) SELECT JSON_ARRAY(1,2,3,4);
 
 1 rows affected.
@@ -3991,7 +3991,7 @@ SQL> insert into func_res_test_bison_off(result)  select interval '22' year;
 
 SQL> insert into func_res_test_bison_off(result)  select interval '2022' year; --error
 
-OG-00674, [1:73]YEAR field exceeds the specified precision (2)
+OG-00674, [1:53]YEAR field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison_off(result)  select interval '2022' year(4);
 
 1 rows affected.
@@ -4002,17 +4002,17 @@ SQL> insert into func_res_test_bison_off(result)  select interval '22' year to y
 
 SQL> insert into func_res_test_bison_off(result)  select interval '2022' year to year; --error
 
-OG-00674, [1:77]YEAR field exceeds the specified precision (2)
+OG-00674, [1:53]YEAR field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison_off(result)  select interval '2022' year(4) to year;
 
 1 rows affected.
 
 SQL> insert into func_res_test_bison_off(result)  select interval '22' year to MONTH; --error
 
-OG-00673, [1:75]Invalid interval text -- format error
+OG-00673, [1:53]Invalid interval text -- format error
 SQL> insert into func_res_test_bison_off(result)  select interval '2022-11' year to MONTH; --error
 
-OG-00674, [1:80]YEAR field exceeds the specified precision (2)
+OG-00674, [1:53]YEAR field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison_off(result)  select interval '2022-11' year(4) to MONTH;
 
 1 rows affected.
@@ -4031,7 +4031,7 @@ SQL> insert into func_res_test_bison_off(result)  select interval '11 22:05' day
 
 SQL> insert into func_res_test_bison_off(result)  select interval '100 10' day to hour; --error
 
-OG-00674, [1:78]DAY field exceeds the specified precision (2)
+OG-00674, [1:53]DAY field exceeds the specified precision (2)
 SQL> insert into func_res_test_bison_off(result)  select interval '100 10' day(3) to hour;
 
 1 rows affected.
@@ -4088,7 +4088,7 @@ SQL> insert into func_res_test_bison_off(result) select X'5734567'; --error
 OG-00105, [1:52]Invalid format of hex
 SQL> insert into func_res_test_bison_off(result) select x'573456'; --error
 
-OG-00601, [1:53]Sql syntax error: syntax error
+OG-00601, [1:53]Sql syntax error: unexpected string
 SQL> 
 SQL> insert into func_res_test_bison_off(result) select 1::int;
 
@@ -4521,7 +4521,7 @@ a_lowercase
 
 SQL> drop table t_lowercase; --error
 
-OG-00843, [1:23]The table or view SYS.T_LOWERCASE does not exist.
+OG-00843, [1:12]The table or view SYS.T_LOWERCASE does not exist.
 SQL> drop table `t_lowercase`;
 
 Succeed.
@@ -4530,28 +4530,28 @@ SQL>
 SQL> --- error, reservered keyword, can't be object name
 SQL> create table t_reserverd_test(rownum int);
 
-OG-00601, [1:31]Sql syntax error: syntax error
+OG-00601, [1:31]Sql syntax error: unexpected ROWNUM
 SQL> create table t_reserverd_test(rowid int);
 
-OG-00601, [1:31]Sql syntax error: syntax error
+OG-00601, [1:31]Sql syntax error: unexpected ROWID
 SQL> create table t_reserverd_test(rowscn int);
 
-OG-00601, [1:31]Sql syntax error: syntax error
+OG-00601, [1:31]Sql syntax error: unexpected ROWSCN
 SQL> create table t_reserverd_test(sysdate int);
 
-OG-00601, [1:31]Sql syntax error: syntax error
+OG-00601, [1:31]Sql syntax error: unexpected SYSDATE
 SQL> create table t_reserverd_test(null int);
 
-OG-00601, [1:31]Sql syntax error: syntax error
+OG-00601, [1:31]Sql syntax error: unexpected NULL
 SQL> create table t_reserverd_test(true int);
 
-OG-00601, [1:31]Sql syntax error: syntax error
+OG-00601, [1:31]Sql syntax error: unexpected TRUE
 SQL> create table t_reserverd_test(false int);
 
-OG-00601, [1:31]Sql syntax error: syntax error
+OG-00601, [1:31]Sql syntax error: unexpected FALSE
 SQL> create table t_reserverd_test(user int);
 
-OG-00601, [1:31]Sql syntax error: syntax error
+OG-00601, [1:31]Sql syntax error: unexpected USER
 SQL> 
 SQL> --- quoted keyword can be column name, but "ROWID" is an exception
 SQL> drop table if exists t_reserverd_test;
@@ -4568,7 +4568,7 @@ Succeed.
 
 SQL> create table test4("ROWID" int);
 
-OG-00601, [1:32]Sql syntax error: invalid column name 'ROWID'
+OG-00601, [1:20]Sql syntax error: invalid column name 'ROWID'
 SQL> 
 SQL> --test special no arg func
 SQL> create table t_special_no_arg_func(a varchar(100));
@@ -5192,10 +5192,10 @@ Succeed.
 
 SQL> create table test_array3(c1 clob[]); --error
 
-OG-01365, [1:36]Datatype CLOB does not support array type
+OG-01365, [1:29]Datatype CLOB does not support array type
 SQL> create table test_array4(c1 clob[5]); --error
 
-OG-01365, [1:37]Datatype CLOB does not support array type
+OG-01365, [1:29]Datatype CLOB does not support array type
 SQL> drop table test_array1;
 
 Succeed.

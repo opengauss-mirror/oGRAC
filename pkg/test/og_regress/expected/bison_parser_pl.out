@@ -1082,7 +1082,7 @@ SQL> declare
   5 end;
   6 /
 
-OG-00944, [8:1]PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
 [4:5] PLC-00828 procedure DBMS_OUTPUT.PUT_LINE does not exist
 
 SQL> 
@@ -2752,9 +2752,7 @@ SQL> create or replace function bison_pl_array_invalid(p int[]) return int as --
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_PL_ARRAY_INVALID) terminated with compiling errors
-[1:9] PLC-00601 Sql syntax error: invalid array subscript
-[1:13] PLC-00601 Sql syntax error: init columnref expr failed
-[2:16] PLC-00601 Sql syntax error: compile return expr failed
+[3:12] PLC-00601 Sql syntax error: invalid array subscript
 
 
 SQL> drop function if exists bison_pl_array_invalid;
@@ -2775,9 +2773,7 @@ SQL> create or replace function bison_pl_array_invalid_slice(p int[]) return int
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_PL_ARRAY_INVALID_SLICE) terminated with compiling errors
-[1:9] PLC-00601 Sql syntax error: invalid array subscript
-[1:15] PLC-00601 Sql syntax error: init columnref expr failed
-[2:18] PLC-00601 Sql syntax error: compile return expr failed
+[3:12] PLC-00601 Sql syntax error: invalid array subscript
 
 
 SQL> drop function if exists bison_pl_array_invalid_slice;
@@ -2798,9 +2794,7 @@ SQL> create or replace function bison_pl_array_method(p int[]) return int as --e
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_PL_ARRAY_METHOD) terminated with compiling errors
-[1:9] PLC-00916 PL/SQL:syntax error(array variables do not support collection methods)
-[1:17] PLC-00601 Sql syntax error: init function call expr failed
-[2:21] PLC-00601 Sql syntax error: compile return expr failed
+[3:12] PLC-00916 PL/SQL:syntax error(array variables do not support collection methods)
 
 
 SQL> drop function if exists bison_pl_array_method;
@@ -3117,7 +3111,7 @@ SQL> create or replace function bison_local_array_overflow(p int[]) return int[]
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_LOCAL_ARRAY_OVERFLOW) terminated with compiling errors
-[1:7] PLC-00601 Sql syntax error: unsigned integer expected
+[2:11] PLC-00601 Sql syntax error: unsigned integer expected
 
 
 SQL> drop function if exists bison_local_array_overflow;
@@ -3139,7 +3133,7 @@ SQL> create or replace function bison_local_array_negative(p int[]) return int[]
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_LOCAL_ARRAY_NEGATIVE) terminated with compiling errors
-[1:7] PLC-00601 Sql syntax error: unsigned integer expected
+[2:11] PLC-00601 Sql syntax error: unsigned integer expected
 
 
 SQL> drop function if exists bison_local_array_negative;
@@ -3161,7 +3155,7 @@ SQL> create or replace function bison_local_array_decimal(p int[]) return int[] 
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_LOCAL_ARRAY_DECIMAL) terminated with compiling errors
-[1:7] PLC-00601 Sql syntax error: unsigned integer expected
+[2:11] PLC-00601 Sql syntax error: unsigned integer expected
 
 
 SQL> drop function if exists bison_local_array_decimal;
@@ -3183,7 +3177,7 @@ SQL> create or replace function bison_local_array_exponent(p int[]) return int[]
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_LOCAL_ARRAY_EXPONENT) terminated with compiling errors
-[1:7] PLC-00601 Sql syntax error: unsigned integer expected
+[2:11] PLC-00601 Sql syntax error: unsigned integer expected
 
 
 SQL> drop function if exists bison_local_array_exponent;
@@ -3383,8 +3377,7 @@ SQL> create or replace function bison_pl_for_invalid_literal return number as --
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_PL_FOR_INVALID_LITERAL) terminated with compiling errors
-[2:15] PLC-00954 SELECT expected but 50 found
-[2:19] PLC-00601 Sql syntax error: compile for loop failed
+[3:15] PLC-00954 SELECT expected but 50 found
 
 
 SQL> drop function if exists bison_pl_for_invalid_literal;
@@ -3529,8 +3522,7 @@ SQL> create or replace function bison_pl_for_missing_loop return number as --err
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_PL_FOR_MISSING_LOOP) terminated with compiling errors
-[2:5] PLC-00954 LOOP expected but 50 found
-[2:46] PLC-00601 Sql syntax error: compile for loop failed
+[3:5] PLC-00954 LOOP expected but 50 found
 
 
 SQL> drop function if exists bison_pl_for_missing_loop;
@@ -3828,7 +3820,792 @@ SQL> drop table if exists bison_pl_t;
 
 Succeed.
 
+SQL>
+SQL> -- Bison diagnostics: preserve the original failure and clear it for the next statement.
+SQL>
+SQL> -- Missing right operand in an SQL expression.
+SQL>
+SQL> SELECT 1 + FROM sys_dummy;
+
+OG-00601, [1:12]Sql syntax error: unexpected FROM
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Missing SQL WHERE condition.
+SQL>
+SQL> SELECT 1 FROM sys_dummy WHERE ;
+
+OG-00601, [1:31]Sql syntax error: unexpected end of input
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Propagate the error from a declaration default expression.
+SQL>
+SQL> DECLARE
+  2     v INTEGER := 1 + ;
+  3 BEGIN
+  4     NULL;
+  5 END;
+  6 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[2:22] PLC-00601 Sql syntax error: unexpected end of input
+
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Propagate the error from a parenthesized FOR query.
+SQL>
+SQL> BEGIN
+  2     FOR j IN (50) LOOP
+  3         NULL;
+  4     END LOOP;
+  5 END;
+  6 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[2:15] PLC-00954 SELECT expected but 50 found
+
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Preserve the nested SQL error in an IF condition.
+SQL>
+SQL> BEGIN
+  2     IF 1 + THEN
+  3         NULL;
+  4     END IF;
+  5 END;
+  6 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[2:12] PLC-00601 Sql syntax error: unexpected end of input
+
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Report an invalid array subscript once through assignment parsing.
+SQL>
+SQL> DECLARE
+  2     a INT[];
+  3     x INT;
+  4 BEGIN
+  5     x := a[0];
+  6 END;
+  7 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[5:10] PLC-00601 Sql syntax error: invalid array subscript
+
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Keep a new grammar diagnostic when THEN is missing.
+SQL>
+SQL> BEGIN
+  2     IF 1 = 1
+  3         NULL;
+  4     END IF;
+  5 END;
+  6 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[3:9] PLC-00601 Sql syntax error: unexpected NULL
+
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Preserve the nested SQL error in a call argument.
+SQL>
+SQL> BEGIN
+  2     dbe_output.print_line(1 + );
+  3 END;
+  4 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[2:31] PLC-00601 Sql syntax error: unexpected ')'
+
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Preserve a SQL lexer diagnostic for an empty quoted identifier.
+SQL>
+SQL> SELECT "" FROM sys_dummy;
+
+OG-00601, [1:8]Sql syntax error: zero-length delimited identifier
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Preserve a lexer diagnostic through a declaration default expression.
+SQL>
+SQL> DECLARE
+  2     x INT := "";
+  3 BEGIN
+  4     NULL;
+  5 END;
+  6 /
+
+OG-00601, [2:14]Sql syntax error: zero-length delimited identifier
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- A failed expression probe must not poison a successful condition assignment.
+SQL>
+SQL> DECLARE
+  2     b BOOLEAN;
+  3 BEGIN
+  4     b := 1 = 1;
+  5     IF b THEN
+  6         NULL;
+  7     END IF;
+  8 END;
+  9 /
+
+PL/SQL procedure successfully completed.
+
 SQL> 
+SQL> -- Exercise Bison source locations and parameter mappings with isolated objects.
+SQL> drop trigger if exists BISON_LOC_P2_TRG_EXPR;
+
+Succeed.
+
+SQL> drop trigger if exists BISON_LOC_P2_TRG_SQL;
+
+Succeed.
+
+SQL> drop procedure if exists BISON_LOC_P2_PROC;
+
+Succeed.
+
+SQL> drop table if exists BISON_LOC_P2_T;
+
+Succeed.
+
+SQL> create table BISON_LOC_P2_T(id int);
+
+Succeed.
+
+SQL> set serveroutput on;
+
+ON
+SQL>
+SQL> -- Map a single-line DEFAULT fragment back to its original semicolon.
+SQL>
+SQL> DECLARE v INT := 1 + ; BEGIN NULL; END;
+  2 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[1:22] PLC-00601 Sql syntax error: unexpected end of input
+
+SQL>
+SQL> -- Verify SQL recovery in the same session.
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- Verify PL recovery in the same session.
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Map multiline expressions inside nested blocks to the original source.
+SQL>
+SQL> BEGIN
+  2     DECLARE
+  3         v INTEGER :=
+  4             1 +
+  5             ;
+  6     BEGIN NULL; END;
+  7 END;
+  8 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[5:13] PLC-00601 Sql syntax error: unexpected end of input
+
+SQL>
+SQL> -- Verify SQL recovery in the same session.
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- Verify PL recovery in the same session.
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Keep stored procedure locations when SELECT INTO is rewritten.
+SQL>
+SQL> CREATE PROCEDURE BISON_LOC_P2_PROC AS
+  2     v INT;
+  3 BEGIN
+  4     SELECT 1 + INTO v FROM sys_dummy;
+  5 END;
+  6 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_LOC_P2_PROC) terminated with compiling errors
+[4:23] PLC-00601 Sql syntax error: unexpected FROM
+
+
+SQL>
+SQL> -- Verify SQL recovery in the same session.
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- Verify PL recovery in the same session.
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Map an expression after rewriting a trigger :new reference.
+SQL>
+SQL> CREATE TRIGGER BISON_LOC_P2_TRG_EXPR
+  2 BEFORE INSERT ON BISON_LOC_P2_T
+  3 FOR EACH ROW
+  4 BEGIN
+  5     :new.id := :new.id + ;
+  6 END;
+  7 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_LOC_P2_TRG_EXPR) terminated with compiling errors
+[5:26] PLC-00601 Sql syntax error: unexpected end of input
+
+
+SQL>
+SQL> -- Verify SQL recovery in the same session.
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- Verify PL recovery in the same session.
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Map static SQL after rewriting a trigger :new reference.
+SQL>
+SQL> CREATE TRIGGER BISON_LOC_P2_TRG_SQL
+  2 BEFORE INSERT ON BISON_LOC_P2_T
+  3 FOR EACH ROW
+  4 BEGIN
+  5     INSERT INTO BISON_LOC_P2_T VALUES (:new.id + );
+  6 END;
+  7 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_LOC_P2_TRG_SQL) terminated with compiling errors
+[5:50] PLC-00601 Sql syntax error: unexpected ')'
+
+
+SQL>
+SQL> -- Verify SQL recovery in the same session.
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- Verify PL recovery in the same session.
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Keep CRLF line boundaries and UTF-8 byte columns in error locations.
+SQL>
+SQL> DECLARE
+  2     x INT;
+  3 BEGIN
+  4     x := LENGTH('中文') + ;
+  5 END;
+  6 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[4:29] PLC-00601 Sql syntax error: unexpected end of input
+
+SQL>
+SQL> -- Verify SQL recovery in the same session.
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- Verify PL recovery in the same session.
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Preserve the original token location through a top-level CALL wrapper.
+SQL>
+SQL> CALL dbe_output.print_line(1 + );
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[1:32] PLC-00601 Sql syntax error: unexpected ')'
+
+SQL>
+SQL> -- Verify SQL recovery in the same session.
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- Verify PL recovery in the same session.
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Locate multiline SQL EOF after the client submits the slash-delimited buffer.
+SQL>
+SQL> SELECT
+  2 1 +
+  3 /
+
+OG-00601, [2:4]Sql syntax error: unexpected end of input
+SQL>
+SQL> -- Verify SQL recovery in the same session.
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- Verify PL recovery in the same session.
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Preserve binding names across static SQL, expressions, conditions and calls.
+SQL>
+SQL> BEGIN
+  2     EXECUTE IMMEDIATE 'declare a int; begin
+  3         select :x - :y into a from sys_dummy;
+  4         dbe_output.print_line(a);
+  5         a := :y - :x;
+  6         dbe_output.print_line(a);
+  7         if :x > :y then
+  8             dbe_output.print_line(:x - :y);
+  9         end if;
+ 10     end;' USING 47, 13;
+ 11 END;
+ 12 /
+
+34
+-34
+34
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Preserve binding names when expressions precede static SQL.
+SQL>
+SQL> BEGIN
+  2     EXECUTE IMMEDIATE 'declare a int; begin
+  3         a := :x - :y;
+  4         dbe_output.print_line(a);
+  5         select :y - :x into a from sys_dummy;
+  6         dbe_output.print_line(a);
+  7     end;' USING 47, 13;
+  8 END;
+  9 /
+
+34
+-34
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Keep an independent dynamic block in its own parameter namespace.
+SQL>
+SQL> BEGIN
+  2     EXECUTE IMMEDIATE 'declare a int; begin
+  3         a := :x - :y;
+  4         execute immediate ''begin dbe_output.print_line(:x - :y); end;'' using :y, :x;
+  5         dbe_output.print_line(:x - :y);
+  6     end;' USING 47, 13;
+  7 END;
+  8 /
+
+-34
+34
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Keep the EXECUTE location and the inner SQL location for an unterminated string.
+SQL>
+SQL> BEGIN
+  2     EXECUTE IMMEDIATE 'SELECT ''broken';
+  3 END;
+  4 /
+
+OG-00932, [2:5] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[1:8] OG-00601, Sql syntax error: unterminated quoted string
+
+SQL>
+SQL> -- Verify SQL recovery in the same session.
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- Verify PL recovery in the same session.
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Keep the EXECUTE location and the inner SQL location for an unterminated comment.
+SQL>
+SQL> BEGIN
+  2     EXECUTE IMMEDIATE 'SELECT 1 /* broken';
+  3 END;
+  4 /
+
+OG-00932, [2:5] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[1:10] OG-00601, Sql syntax error: unterminated /* comment
+
+SQL>
+SQL> -- Verify SQL recovery in the same session.
+SQL>
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- Verify PL recovery in the same session.
+SQL>
+SQL> BEGIN
+  2     NULL;
+  3 END;
+  4 /
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> -- Verify custom expected-token diagnostics and same-session recovery.
+SQL> SELECT 1 FROM sys_dummy FOR UPDATE WAIT;
+
+OG-00601, [1:40]Sql syntax error: number expected but end of input found
+SQL> SELECT 1 + NULLS FIRST FROM sys_dummy;
+
+OG-00601, [1:12]Sql syntax error: unexpected NULLS FIRST
+SQL> SELECT 1 + ERROR ON EMPTY FROM sys_dummy;
+
+OG-00601, [1:12]Sql syntax error: unexpected ERROR ON EMPTY
+SQL> BEGIN
+  2     NULL
+  3 END;
+  4 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[3:1] PLC-00601 Sql syntax error: ';' expected but END found
+
+SQL> DECLARE v INT := 0; BEGIN v := v + 1; dbe_output.print_line(v); END;
+  2 /
+
+1
+
+PL/SQL procedure successfully completed.
+
+SQL> SELECT 1 FROM sys_dummy;
+
+1
+------------
+1
+
+1 rows fetched.
+
+SQL>
+SQL> -- LAC must accept a quoted declaration at a stored-body boundary.
+SQL> CREATE PROCEDURE BISON_LAC_QUOTED_PROC AS
+  2     "v" NUMBER := 7;
+  3 BEGIN
+  4     dbe_output.print_line("v");
+  5 END;
+  6 /
+
+Succeed.
+
+SQL> CALL BISON_LAC_QUOTED_PROC();
+
+7
+
+PL/SQL procedure successfully completed.
+
+SQL> DROP PROCEDURE BISON_LAC_QUOTED_PROC;
+
+Succeed.
+
+SQL>
+SQL> drop trigger if exists BISON_LOC_P2_TRG_EXPR;
+
+Succeed.
+
+SQL> drop trigger if exists BISON_LOC_P2_TRG_SQL;
+
+Succeed.
+
+SQL> drop procedure if exists BISON_LOC_P2_PROC;
+
+Succeed.
+
+SQL> drop table if exists BISON_LOC_P2_T;
+
+Succeed.
+
+SQL> set serveroutput off;
+
+OFF
+SQL>
 SQL> alter system set use_bison_parser = false;
 
 Succeed.

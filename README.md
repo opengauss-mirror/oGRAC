@@ -24,6 +24,7 @@ oGRAC主要由五个主要部分组成：
 
 -   编程语言：C
 -   编译工程：cmake或make，建议使用cmake
+-   解析器生成依赖：GNU Bison **3.6.4 或更高版本**。SQL/PL 文法使用 `parse.error custom` 和 LAC。`sh build/local_install.sh prepare` 与开发构建 Dockerfile 共用 `build/prepare_bison.sh`：复用兼容版本，缺失或版本过低时下载并校验 GNU Bison 3.6.4，安装到 `/usr/local`。CMake 默认优先查找 `/usr/local/bin/bison`，保留最低版本检查；显式指定或缓存的 `BISON_EXECUTABLE` 优先。本要求同时适用于单节点和双节点制包，已编译数据库包的安装不依赖 Bison。
 -   目录说明：
 
 |目录名称   | 说明  |
@@ -130,6 +131,14 @@ docker exec ograc-dev sh -c 'cd /home/regress/ogracKernel && chmod -R 777 output
     cd oGRAC/build
     sh local_install.sh prepare
     ```
+
+    Bison 准备失败会终止 `prepare`，不会打印环境准备成功。若系统依赖已齐全，只需补齐 Bison，可在仓库根目录运行 `bash build/prepare_bison.sh`。无法访问下载站时，使用预先下载的官方源码包，脚本仍会校验固定 SHA-256：
+
+    ```shell
+    BISON_SOURCE_ARCHIVE=/path/to/bison-3.6.4.tar.xz bash build/prepare_bison.sh
+    ```
+
+    默认安装需要 `/usr/local` 写权限，不替换 `/usr/bin/bison`。可通过 `BISON_INSTALL_PREFIX` 指定其他安装目录，再在 CMake 配置时指定 `-DBISON_EXECUTABLE=/该目录/bin/bison`。如果已有 CMake 缓存仍指向旧版本，也应显式更新 `BISON_EXECUTABLE`；`bison --version` 显示的是当前 `PATH` 选中的版本。
 
     （3）如需编译 debug 版本，建议关闭保护虚拟内存选项：
 

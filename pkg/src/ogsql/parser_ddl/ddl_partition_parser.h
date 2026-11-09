@@ -46,6 +46,7 @@ typedef enum index_partition_opt_type {
 
 typedef struct index_partition_opt {
     index_partition_opt_type type;
+    source_location_t loc;
     union {
         char *name;
         uint32 size;

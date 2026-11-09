@@ -18,7 +18,9 @@ function prepare() {
   expect ant bison iputils iproute wget\
   libtirpc-devel make gcc gcc-c++ gdb gdb-gdbserver\
   python3 python3-devel git net-tools cmake automake\
-  byacc libtool --skip-broken
+  byacc libtool m4 tar xz --skip-broken || return 1
+
+  bash "${CURRENT_PATH}/prepare_bison.sh" || return 1
 
   # On openEuler 24.03 install third-party libraries directly from OS repositories.
   # On other OS versions they are built from source by compile_opensource_new.sh.
@@ -202,7 +204,7 @@ function main()
     case $mode in
         prepare)
             prepare
-            exit 0
+            exit $?
             ;;
         compile)
             compile

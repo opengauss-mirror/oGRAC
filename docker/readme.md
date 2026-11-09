@@ -6,6 +6,8 @@
 
 ## 构建镜像
 
+四份开发构建 Dockerfile（`docker/Dockerfile`、`docker/Dockerfile_ARM64`、`docker/images/centos.Dockerfile`、`docker/images/openeuler.Dockerfile`）均从仓库根目录复制 `build/prepare_bison.sh`。镜像构建时复用兼容的 Bison，版本不足时自动安装经过 SHA-256 校验的 3.6.4；构建上下文必须使用仓库根目录，不能改成 `docker/`。已有容器不会随源码更新自动升级，可在容器内运行 `bash build/prepare_bison.sh`，或重新构建镜像。
+
 在**仓库根目录**执行：
 
 ```shell

@@ -34,8 +34,8 @@
             (Current) = (Rhs)[0]; \
     } while (0)
 
-#define YYMALLOC(size) core_yyalloc(size, yyscanner)
-#define YYFREE(ptr) core_yyfree(ptr, yyscanner)
+#define YYMALLOC bison_parser_alloc
+#define YYFREE bison_parser_free
 
 #ifdef YYLEX_PARAM
 #define YYLEX yylex(&yylval, &yylloc, YYLEX_PARAM)

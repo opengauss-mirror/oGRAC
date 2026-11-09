@@ -1582,7 +1582,7 @@ status_t sql_verify_alter_table(sql_stmt_t *stmt)
 
 status_t og_parse_create_table(sql_stmt_t *stmt, knl_table_def_t **table_def, bool32 is_temp, bool32 has_global,
     bool32 if_not_exists, name_with_owner *table_name, galist_t *table_elements, galist_t *table_attrs,
-    sql_select_t *select_ctx, knl_ext_def_t *extern_def)
+    sql_select_t *select_ctx, knl_ext_def_t *extern_def, source_location_t end_loc)
 {
     knl_table_def_t *def = NULL;
     bool32 expect_as = OG_FALSE;
@@ -1609,24 +1609,24 @@ status_t og_parse_create_table(sql_stmt_t *stmt, knl_table_def_t **table_def, bo
     // Validate table name
     if (is_temp && !has_global) {
         if (!stmt->session->knl_session.kernel->attr.enable_ltt) {
-            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR,
+            OG_SRC_THROW_ERROR_EX(table_name->loc, ERR_SQL_SYNTAX_ERROR,
                 "parameter LOCAL_TEMPORARY_TABLE_ENABLED is false, can't create local temporary table");
             return OG_ERROR;
         }
         if (!knl_is_llt_by_name2(def->name.str[0])) {
-            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR,
+            OG_SRC_THROW_ERROR_EX(table_name->loc, ERR_SQL_SYNTAX_ERROR,
                 "local temporary table name should start with '#'");
             return OG_ERROR;
         }
     } else {
         if (knl_is_llt_by_name(def->name.str[0])) {
-            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "table name is invalid");
+            OG_SRC_THROW_ERROR_EX(table_name->loc, ERR_SQL_SYNTAX_ERROR, "table name is invalid");
             return OG_ERROR;
         }
     }
 
     if (sql_table_has_special_char(&def->name)) {
-        OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "invalid variant/object name was found");
+        OG_SRC_THROW_ERROR_EX(table_name->loc, ERR_SQL_SYNTAX_ERROR, "invalid variant/object name was found");
         return OG_ERROR;
     }
 
@@ -1640,7 +1640,7 @@ status_t og_parse_create_table(sql_stmt_t *stmt, knl_table_def_t **table_def, bo
     }
 
     if (expect_as && select_ctx == NULL) {
-        OG_THROW_ERROR(ERR_SQL_SYNTAX_ERROR, "As-select clause expected");
+        OG_SRC_THROW_ERROR(end_loc, ERR_SQL_SYNTAX_ERROR, "As-select clause expected");
         return OG_ERROR;
     } else if (select_ctx != NULL) {
         select_ctx->type = SELECT_AS_VALUES;
@@ -1650,7 +1650,7 @@ status_t og_parse_create_table(sql_stmt_t *stmt, knl_table_def_t **table_def, bo
 
         // 1.check whether columns in select clause match that in column definition clause
         // 2.when with no column definition clause, make sure all result column has an alias
-        OG_RETURN_IFERR(sql_verify_columns(stmt, def));
+        OG_RETURN_IFERR(og_verify_create_table_columns(stmt, def, table_elements));
 
         OG_RETURN_IFERR(ogsql_optimize_logic_select(stmt, select_ctx));
 
@@ -1664,7 +1664,7 @@ status_t og_parse_create_table(sql_stmt_t *stmt, knl_table_def_t **table_def, bo
 
     if (extern_def != NULL) {
         if (def->type == TABLE_TYPE_TRANS_TEMP || def->type == TABLE_TYPE_SESSION_TEMP) {
-            OG_THROW_ERROR_EX(ERR_SQL_SYNTAX_ERROR, "cannot specify TEMPORARY on external table");
+            OG_SRC_THROW_ERROR_EX(table_name->loc, ERR_SQL_SYNTAX_ERROR, "cannot specify TEMPORARY on external table");
             return OG_ERROR;
         }
 
