@@ -92,9 +92,9 @@ EXPLAIN PLAN OUTPUT
 --------------------------------------------------------------------------------------------------------------------------------------------------
 | Id | Operation                                                  | Owner | Name                      | Rows | Cost | StartCost | Bytes | Remark |
 --------------------------------------------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                                           |       |                           | 0    | 0    | 0         |       |        |
-| 1  |   NESTED LOOPS                                             |       |                           | 0    | 0    | 0         |       |        |
-| 2  |       VIEW                                                 | SYS   | DB_TAB_PARTITIONS X       | 0    | 0    | 0         |       |        |
+| 0  | SELECT STATEMENT                                           |       |                           | 0    | 34   | 0         |       |        |
+| 1  |   NESTED LOOPS                                             |       |                           | 0    | 34   | 0         |       |        |
+| 2  |       VIEW                                                 | SYS   | DB_TAB_PARTITIONS X       | 1    | 11   | 0         |       |        |
 | 3  |           TABLE ACCESS BY INDEX ROWID                      | SYS   | SYS_COMPRESS_OBJECTS CO   | 1    | 0    | 0         |       |        |
 | 4  |             INDEX UNIQUE SCAN                              | SYS   | IX_COMPRESS_001           | 1    | 0    | 0         |       |        |
 | 5  |         WINDOW SORT                                        |       |                           | 0    | 11   | 11        |       |        |
@@ -106,11 +106,11 @@ EXPLAIN PLAN OUTPUT
 | 11 |                     INDEX RANGE SCAN                       | SYS   | IX_TABLEPART$001          | 1    | 0    | 0         |       |        |
 | 12 |                 TABLE ACCESS FULL                          | SYS   | SYS_TABLES T              | 3    | 7    | 0         |       |        |
 | 13 |               TABLE ACCESS FULL                            | SYS   | DV_TABLESPACES TS         | 0    | 0    | 0         |       |        |
-| 14 |       SUBSELECT                                            | SYS   | Z                         | 1    | 0    | 0         |       |        |
-| 15 |         MERGE SORT GROUP BY                                |       |                           | 0    | 0    | 0         |       |        |
-| 16 |             SUBSELECT                                      | SYS   | Y                         | 0    | 0    | 0         |       |        |
-| 17 |               NESTED LOOPS                                 |       |                           | 0    | 0    | 0         |       |        |
-| 18 |                   VIEW                                     | SYS   | DB_TAB_SUBPARTITIONS O    | 0    | 0    | 0         |       |        |
+| 14 |       SUBSELECT                                            | SYS   | Z                         | 1    | 23   | 0         |       |        |
+| 15 |         MERGE SORT GROUP BY                                |       |                           | 0    | 23   | 0         |       |        |
+| 16 |             SUBSELECT                                      | SYS   | Y                         | 0    | 23   | 0         |       |        |
+| 17 |               NESTED LOOPS                                 |       |                           | 0    | 23   | 0         |       |        |
+| 18 |                   VIEW                                     | SYS   | DB_TAB_SUBPARTITIONS O    | 1    | 11   | 0         |       |        |
 | 19 |                     WINDOW SORT                            |       |                           | 0    | 11   | 11        |       |        |
 | 20 |                       NESTED LOOPS                         |       |                           | 0    | 11   | 0         |       |        |
 | 21 |                         NESTED LOOPS                       |       |                           | 0    | 11   | 0         |       |        |
@@ -123,7 +123,7 @@ EXPLAIN PLAN OUTPUT
 | 28 |                               TABLE ACCESS BY INDEX ROWID  | SYS   | SYS_SUB_TABLE_PARTS TSUBP | 1    | 0    | 0         |       |        |
 | 29 |                                 INDEX RANGE SCAN           | SYS   | IX_SUBTABLEPART$001       | 1    | 0    | 0         |       |        |
 | 30 |                           TABLE ACCESS FULL                | SYS   | DV_TABLESPACES TS         | 0    | 0    | 0         |       |        |
-| 31 |                   VIEW                                     | SYS   | DB_PART_TABLES P          | 0    | 0    | 0         |       |        |
+| 31 |                   VIEW                                     | SYS   | DB_PART_TABLES P          | 1    | 11   | 0         |       |        |
 | 32 |                     NESTED LOOPS                           |       |                           | 0    | 11   | 0         |       |        |
 | 33 |                       NESTED LOOPS                         |       |                           | 0    | 11   | 0         |       |        |
 | 34 |                         NESTED LOOPS                       |       |                           | 0    | 7    | 0         |       |        |

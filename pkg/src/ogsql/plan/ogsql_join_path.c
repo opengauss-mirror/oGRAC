@@ -1184,7 +1184,7 @@ static status_t sql_build_subselect_single_query(plan_assist_t *parent_pa, sql_t
         jnode->cost.cost += query->join_root->cost.cost;
         jnode->cost.startup_cost += query->join_root->cost.startup_cost;
         jnode->cost.card += query->join_root->cost.card;
-    } else if (pa.tables[0]->type == SUBSELECT_AS_TABLE || pa.tables[0]->type == WITH_AS_TABLE) {
+    } else if (OG_IS_SUBSELECT_TABLE(pa.tables[0]->type)) {
         join_tbl_bitmap_t empty_table_ids;
         sql_bitmap_init(&empty_table_ids);
         RET_AND_RESTORE_STACK_IFERR(
@@ -1253,32 +1253,6 @@ static status_t sql_build_subselect_path(plan_assist_t *pa, sql_table_t *table,
     OGSQL_RESTORE_STACK(stmt);
 
     return OG_SUCCESS;
-}
-
-static void sql_pre_init_jtable_cost(sql_table_t *table)
-{
-    if (table == NULL) {
-        return;
-    }
-
-    switch (table->type) {
-        case VIEW_AS_TABLE:
-        case SUBSELECT_AS_TABLE:
-            if (table->select_ctx != NULL && table->select_ctx->plan != NULL) {
-                table->card = table->select_ctx->plan->rows;
-                table->cost = table->select_ctx->plan->cost;
-                table->startup_cost = table->select_ctx->plan->start_cost;
-            }
-            break;
-
-        case NORMAL_TABLE:
-        case FUNC_AS_TABLE:
-        case JOIN_AS_TABLE:
-        case WITH_AS_TABLE:
-        case JSON_TABLE:
-        default:
-            break;
-    }
 }
 
 static inline bool32 join_cmp_can_use_index_access(cmp_type_t type)
@@ -1581,7 +1555,7 @@ static status_t generate_parameterized_paths(join_assist_t *ja, sql_join_table_t
 
 static status_t sql_build_base_jtable_path(join_assist_t *ja, sql_table_t *table, sql_join_table_t *jtable)
 {
-    if (table->type == SUBSELECT_AS_TABLE || table->type == WITH_AS_TABLE) {
+    if (OG_IS_SUBSELECT_TABLE(table->type)) {
         if (table->select_ctx->plan != NULL) {
             sql_join_node_t* jnode;
             OG_RETURN_IFERR(sql_create_join_node(ja->stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &jnode));
@@ -1625,7 +1599,6 @@ static status_t sql_build_base_jtable_path(join_assist_t *ja, sql_table_t *table
 
     sql_join_node_t* jnode;
     OG_RETURN_IFERR(sql_create_join_node(ja->stmt, JOIN_TYPE_NONE, table, NULL, NULL, NULL, &jnode));
-    sql_pre_init_jtable_cost(table);
     sql_init_sql_join_node_cost(jnode);
     SQL_LOG_OPTINFO(ja->stmt, "[CBO]Add jpath oper:%d, type:%d, cost:%f, startup:%f",
         jnode->oper, jnode->type, jnode->cost.cost, jnode->cost.startup_cost);
@@ -3038,7 +3011,7 @@ static status_t sql_complete_join_path(join_assist_t *ja, sql_join_node_t *jpath
     if (jpath->type == JOIN_TYPE_NONE) {
         sql_table_t *table = TABLE_OF_JOIN_LEAF(jpath);
         sql_plan_assist_set_table(ja->pa, table);
-        if (table->type == SUBSELECT_AS_TABLE || table->type == WITH_AS_TABLE) {
+        if (OG_IS_SUBSELECT_TABLE(table->type)) {
             table->cost = jpath->cost.cost;
             table->card = jpath->cost.card;
         }

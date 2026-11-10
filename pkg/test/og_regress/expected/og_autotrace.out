@@ -68,8 +68,76 @@ C1
 
 SQL> 
 SQL> DROP TABLE IF EXISTS autotrace_test;
+
 Succeed.
 
+SQL>
+SQL> DROP VIEW IF EXISTS autotrace_view;
 
+Succeed.
 
+SQL> DROP TABLE IF EXISTS autotrace_view_input PURGE;
 
+Succeed.
+
+SQL> CREATE TABLE autotrace_view_input(k INT, a INT[]);
+
+Succeed.
+
+SQL> BEGIN
+  2     FOR i IN 1..10000 LOOP
+  3         INSERT INTO autotrace_view_input(k) VALUES(1);
+  4     END LOOP;
+  5 END;
+  6 /
+
+PL/SQL procedure successfully completed.
+
+SQL> COMMIT;
+
+Succeed.
+
+SQL> ANALYZE TABLE autotrace_view_input COMPUTE STATISTICS;
+
+Succeed.
+
+SQL> CREATE VIEW autotrace_view AS SELECT * FROM autotrace_view_input;
+
+Succeed.
+
+SQL> SET AUTOTRACE TRACEONLY;
+
+TRACEONLY
+SQL> SELECT * FROM autotrace_view l JOIN autotrace_view r ON l.k=r.k+1 LIMIT 50;
+
+EXPLAIN PLAN OUTPUT
+----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------
+| Id | Operation                     | Owner | Name                 | Rows  | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT              |       |                      | 50    | 380  | 363       |       |        |
+| 1  |   QUERY LIMIT                 |       |                      | 50    | 380  | 363       |       |        |
+| 2  |     HASH JOIN(R)              |       |                      | 2500  | 1218 | 363       |       |        |
+| 3  |         VIEW                  | SYS   | AUTOTRACE_VIEW L     | 10000 | 180  | 0         |       |        |
+| 4  |             TABLE ACCESS FULL | SYS   | AUTOTRACE_VIEW_INPUT | 10000 | 155  | 0         |       |        |
+| 5  |         VIEW                  | SYS   | AUTOTRACE_VIEW R     | 10000 | 180  | 0         |       |        |
+| 6  |             TABLE ACCESS FULL | SYS   | AUTOTRACE_VIEW_INPUT | 10000 | 155  | 0         |       |        |
+-----------------------------------------------------------------------------------------------------------------
+Predicate Information (identified by id):
+-----------------------------------------
+    2 - access: L.K = R.K + 1
+
+14 rows fetched.
+
+SQL> SET AUTOTRACE OFF;
+
+OFF
+SQL> DROP VIEW autotrace_view;
+
+Succeed.
+
+SQL> DROP TABLE autotrace_view_input PURGE;
+
+Succeed.
+
+SQL>
