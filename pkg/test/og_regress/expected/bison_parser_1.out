@@ -1982,6 +1982,16 @@ SQL> COMMIT;
 Succeed.
 
 SQL> 
+SQL> select region, count(*) from sales_data group by (region), region order by region;
+
+REGION               COUNT(*)
+-------------------- --------------------
+North                4
+South                4
+
+2 rows fetched.
+
+SQL>
 SQL> SELECT 
   2     region,
   3     product_category,

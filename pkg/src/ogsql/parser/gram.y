@@ -2557,7 +2557,8 @@ group_by_cartesian_item:
         ;
 
 group_by_list:
-            a_expr      %prec UMINUS
+            /* Finish a parenthesized expression before reducing the group list. */
+            a_expr      %prec IDENT
                 {
                     galist_t *group_sets = NULL;
                     group_set_t *group_set = NULL;

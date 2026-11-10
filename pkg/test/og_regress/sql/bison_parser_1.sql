@@ -710,6 +710,8 @@ INSERT INTO sales_data VALUES (8, 'South', 'Electronics', 'Sarah', 2100, DATE '2
 
 COMMIT;
 
+select region, count(*) from sales_data group by (region), region order by region;
+
 SELECT 
     region,
     product_category,
