@@ -4160,15 +4160,19 @@ static status_t sql_estimate_connect_mtrl_cost(sql_stmt_t *stmt, plan_node_t *pl
         input_rows * (CBO_DEFAULT_CPU_HASH_BUILD_COST + CBO_DEFAULT_CPU_HASH_CALC_COST);
     double probe_cost = input_rows * (CBO_DEFAULT_CPU_HASH_CALC_COST + CBO_DEFAULT_CPU_OPERATOR_COST);
 
-    /* CONNECT BY MATERIALIZE scans the child once to build a hash table, then probes it by PRIOR keys. */
+    /* Materialize the input once, then probe by PRIOR keys or scan it for path-dependent conditions. */
     plan->rows = plan->cb_mtrl.next->rows;
     double cache_cost = 0;
     double first_cache_cost = 0;
+    double scan_cost = MAX(plan->cb_mtrl.rs_tables->count, 1) * CBO_DEFAULT_CPU_SCAN_TUPLE_COST +
+        CBO_DEFAULT_CPU_OPERATOR_COST;
+    if (!plan->cb_mtrl.cache_children && plan->cb_mtrl.key_exprs->count == 0) {
+        plan->rows = (int64)sql_estimate_connect_rows(input_rows, input_rows);
+        probe_cost = plan->rows * input_rows * scan_cost;
+    }
     if (plan->cb_mtrl.cache_children) {
         double groups = sql_estimate_connect_groups(&plan->cb_mtrl, input_rows);
         double matches = input_rows * CBO_DEFAULT_EQ_FF;
-        double scan_cost = MAX(plan->cb_mtrl.rs_tables->count, 1) * CBO_DEFAULT_CPU_SCAN_TUPLE_COST +
-            CBO_DEFAULT_CPU_OPERATOR_COST;
         build_cost += 2 * CBO_DEFAULT_HASH_INIT_COST + input_rows *
             (scan_cost + plan->cb_mtrl.cycle_exprs->count * CBO_DEFAULT_CPU_HASH_CALC_COST) +
             groups * CBO_DEFAULT_CPU_HASH_BUILD_COST;
@@ -4178,7 +4182,7 @@ static status_t sql_estimate_connect_mtrl_cost(sql_stmt_t *stmt, plan_node_t *pl
         plan->rows = (int64)(groups <= 1 ? input_rows : sql_estimate_connect_rows(input_rows, input_rows));
         probe_cost = input_rows * scan_cost + plan->rows * CBO_DEFAULT_CPU_HASH_CALC_COST;
         // A single cycle-key group has no non-cyclic children; the executor skips that bucket.
-        if (groups > 1) {
+        if (groups > 1 || plan->cb_mtrl.cycle_exprs->count == 0) {
             probe_cost += plan->rows * MAX(matches, 1.0) * scan_cost;
         }
     }

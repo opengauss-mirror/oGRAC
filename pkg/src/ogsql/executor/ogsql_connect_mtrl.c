@@ -350,7 +350,7 @@ static status_t sql_connect_mtrl_build(sql_stmt_t *stmt, sql_cursor_t *cursor, s
         return OG_ERROR;
     }
 
-    if (!cb_mtrl_p->cache_children) {
+    if (!cb_mtrl_p->cache_children && cb_mtrl_p->key_exprs->count != 0) {
         OG_RETURN_IFERR(vmc_alloc(&cursor->vmc, sizeof(og_type_t) * cb_mtrl_p->key_exprs->count,
             (void **)&CB_MTRL_CONTEXT(cursor)->key_types));
         OG_RETURN_IFERR(sql_get_hash_key_types(stmt, query_cur->query, cb_mtrl_p->key_exprs, cb_mtrl_p->prior_exprs,
@@ -377,10 +377,13 @@ static status_t sql_connect_mtrl_build(sql_stmt_t *stmt, sql_cursor_t *cursor, s
             OG_BREAK_IF_ERROR(sql_connect_mtrl_find_group(stmt, cursor, query_cur, row_buf, &group_id));
             OG_BREAK_IF_ERROR(sql_make_connect_cached_row(cursor, row_buf, group_id, rids, group_id, &row_size));
         } else {
-            OG_BREAK_IF_ERROR(
-                sql_make_hash_key(stmt, &ra, row_buf, cb_mtrl_p->key_exprs, CB_MTRL_CONTEXT(cursor)->key_types, &has_null));
+            has_null = (cb_mtrl_p->key_exprs->count == 0);
+            if (!has_null) {
+                OG_BREAK_IF_ERROR(sql_make_hash_key(stmt, &ra, row_buf, cb_mtrl_p->key_exprs,
+                    CB_MTRL_CONTEXT(cursor)->key_types, &has_null));
+            }
             if (has_null) {
-                OG_BREAK_IF_ERROR(sql_make_null_hash_key(row_buf, cb_mtrl_p->key_exprs->count));
+                OG_BREAK_IF_ERROR(sql_make_null_hash_key(row_buf, MAX(cb_mtrl_p->key_exprs->count, 1)));
             }
             OG_BREAK_IF_ERROR(sql_mtrl_row_append_data(row_buf, &row_size, (const char *)rids,
                 cb_mtrl_p->rs_tables->count * sizeof(mtrl_rowid_t)));
@@ -475,8 +478,12 @@ static status_t sql_connect_mtrl_make_prior_row(sql_stmt_t *stmt, sql_cursor_t *
     status_t status = OG_SUCCESS;
     variant_t value;
 
+    row_init(ra, buf, OG_MAX_ROW_SIZE, MAX(prior_exprs->count, 1));
+    if (prior_exprs->count == 0) {
+        // An empty dependency tuple represents one shared parent-independent group.
+        return row_put_null(ra);
+    }
     OG_RETURN_IFERR(SQL_CURSOR_PUSH(stmt, dst_cursor));
-    row_init(ra, buf, OG_MAX_ROW_SIZE, prior_exprs->count);
     for (uint32 i = 0; i < prior_exprs->count; i++) {
         node = (expr_node_t *)cm_galist_get(prior_exprs, i);
         status = sql_exec_expr_node(stmt, node, &value);
@@ -535,6 +542,10 @@ static inline void sql_connect_mtrl_close_vmctx_page(sql_stmt_t *stmt, mtrl_rowi
 static status_t sql_connect_mtrl_check_iscycle(sql_stmt_t *stmt, sql_cursor_t *cursor, sql_cursor_t *dst_cursor,
     bool32 *is_cycle)
 {
+    *is_cycle = OG_FALSE;
+    if (!cursor->query->connect_by_prior) {
+        return OG_SUCCESS;
+    }
     if (CB_MTRL_PLAN->cache_children) {
         *is_cycle = sql_connect_mtrl_group(cursor, dst_cursor->connect_data.mtrl_group)->active_count != 0;
         if (*is_cycle && !cursor->query->connect_by_nocycle) {
@@ -763,6 +774,10 @@ static status_t sql_connect_mtrl_fetch_first_cursor(sql_stmt_t *stmt, sql_cursor
 static inline status_t sql_make_connect_mtrl_scan_key(sql_stmt_t *stmt, sql_cursor_t *cursor, cb_mtrl_plan_t *cb_mtrl,
     char *buf, bool32 *has_null)
 {
+    if (cb_mtrl->prior_exprs->count == 0) {
+        *has_null = OG_FALSE;
+        return sql_make_null_hash_key(buf, 1);
+    }
     row_assist_t ra;
     return sql_make_hash_key(stmt, &ra, buf, cb_mtrl->prior_exprs, CB_MTRL_CONTEXT(cursor)->key_types, has_null);
 }
@@ -1001,7 +1016,7 @@ static status_t sql_connect_mtrl_open_children(sql_stmt_t *stmt, sql_cursor_t *c
         OG_RETURN_IFERR(sql_connect_mtrl_build_children(stmt, cursor, child, parent_group, buf));
     }
     cb_mtrl_group_t *group = sql_connect_mtrl_group(cursor, parent_group);
-    if (group->has_children && group->only_self_children) {
+    if (cursor->query->connect_by_prior && group->has_children && group->only_self_children) {
         // Every candidate has the parent's cycle key. Repeated roots need not read the whole bucket again.
         if (!cursor->query->connect_by_nocycle) {
             OG_THROW_ERROR(ERR_CONNECT_BY_LOOP);
@@ -1048,7 +1063,6 @@ static status_t sql_connect_mtrl_get_first_entry(sql_stmt_t *stmt, sql_cursor_t 
         iter->curr_match.vmid = OG_INVALID_ID32;
         return OG_SUCCESS;
     }
-
     scan_assist.scan_mode = HASH_KEY_SCAN;
     scan_assist.buf = key_buf;
     scan_assist.size = ((row_head_t *)key_buf)->size;

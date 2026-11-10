@@ -848,44 +848,38 @@ SQL> EXPLAIN PLAN FOR SELECT level, MOD(level,2) AS parity, POWER(level,2) AS sq
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
-------------------------------------------------------------------------------------------------
-| Id | Operation               | Owner | Name      | Rows | Cost  | StartCost | Bytes | Remark |
-------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT        |       |           | 3511 | 42712 | 0         |       |        |
-| 1  |   START WITH            |       |           | 744  | 10    | 0         |       |        |
-| 2  |       TABLE ACCESS FULL | SYS   | SYS_DUMMY | 744  | 10    | 0         |       |        |
-| 3  |   CONNECT BY            |       |           | 3511 | 42712 | 0         |       |        |
-| 4  |       TABLE ACCESS FULL | SYS   | SYS_DUMMY | 744  | 10    | 0         |       |        |
-------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------
+| Id | Operation                | Owner | Name      | Rows | Cost  | StartCost | Bytes | Remark |
+-------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT         |       |           | 3511 | 32683 | 31        |       |        |
+| 1  |   CONNECT BY MATERIALIZE |       |           | 3511 | 32683 | 31        |       |        |
+| 2  |       TABLE ACCESS FULL  | SYS   | SYS_DUMMY | 744  | 10    | 0         |       |        |
+-------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
-    3 - filter: LEVEL <= 10                                     
+    1 - access: LEVEL <= 10
 
-12 rows fetched.
+10 rows fetched.
 
 SQL> EXPLAIN PLAN FOR SELECT level, MOD(level,2) AS parity, POWER(level,2) AS squared FROM 
   2     (SELECT 1 AS seed FROM SYS_DUMMY) START WITH seed = 1 CONNECT BY PRIOR seed = seed AND LEVEL <= 10;
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
-----------------------------------------------------------------------------------------------------
-| Id | Operation                   | Owner | Name      | Rows | Cost  | StartCost | Bytes | Remark |
-----------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT            |       |           | 3511 | 42712 | 0         |       |        |
-| 1  |   START WITH                |       |           | 744  | 10    | 0         |       |        |
-| 2  |       SUBSELECT             | SYS   |           | 744  | 10    | 0         |       |        |
-| 3  |           TABLE ACCESS FULL | SYS   | SYS_DUMMY | 744  | 10    | 0         |       |        |
-| 4  |   CONNECT BY                |       |           | 3511 | 42712 | 0         |       |        |
-| 5  |       SUBSELECT             | SYS   |           | 744  | 10    | 0         |       |        |
-| 6  |           TABLE ACCESS FULL | SYS   | SYS_DUMMY | 744  | 10    | 0         |       |        |
-----------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------
+| Id | Operation                   | Owner | Name      | Rows | Cost | StartCost | Bytes | Remark |
+---------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT            |       |           | 744  | 35   | 31        |       |        |
+| 1  |   CONNECT BY MATERIALIZE    |       |           | 744  | 35   | 31        |       |        |
+| 2  |       SUBSELECT             | SYS   |           | 744  | 10   | 0         |       |        |
+| 3  |           TABLE ACCESS FULL | SYS   | SYS_DUMMY | 744  | 10   | 0         |       |        |
+---------------------------------------------------------------------------------------------------
 Predicate Information (identified by id):                       
 -----------------------------------------                       
+    1 - access: PRIOR SEED = SEED AND LEVEL <= 10
     1 - filter: SEED = 1                                        
-    2 - filter: SEED = 1                                        
-    4 - filter: PRIOR SEED = SEED AND LEVEL <= 10               
 
-16 rows fetched.
+12 rows fetched.
 
 SQL> 
 SQL> 
