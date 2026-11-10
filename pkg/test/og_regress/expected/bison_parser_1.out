@@ -5668,6 +5668,14 @@ COUNT(*)
 1 rows fetched.
 
 SQL> 
+SQL> select count(*) as matched from sys_dummy where (null-1) is null and (1-1) is not null and (4-1)/2-2 is not null;
+
+MATCHED
+--------------------
+1
+
+1 rows fetched.
+
 SQL> alter system set use_bison_parser = false;
 
 Succeed.
