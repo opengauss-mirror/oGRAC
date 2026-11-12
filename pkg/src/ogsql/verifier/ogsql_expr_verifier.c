@@ -597,6 +597,7 @@ static inline status_t sql_verify_rowscn(sql_verifier_t *verif, expr_node_t *nod
             return OG_ERROR;
         }
 
+        table->rowscn_exists = OG_TRUE;
         return OG_SUCCESS;
     }
 
@@ -611,6 +612,7 @@ static inline status_t sql_verify_rowscn(sql_verifier_t *verif, expr_node_t *nod
         return OG_ERROR;
     }
 
+    table->rowscn_exists = OG_TRUE;
     return OG_SUCCESS;
 }
 

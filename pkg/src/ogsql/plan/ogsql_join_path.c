@@ -1183,6 +1183,7 @@ static status_t sql_build_subselect_single_query(plan_assist_t *parent_pa, sql_t
     plan_assist_t pa;
     sql_init_plan_assist(stmt, &pa, query, SQL_QUERY_NODE, parent_pa);
     pa.ignore_hj = table->is_push_down;
+    double card_before = jnode->cost.card;
 
     OGSQL_SAVE_STACK(stmt);
     OG_RETURN_IFERR(sql_stack_alloc(stmt, sizeof(galist_t), (void **)&pa.outer_rels_list));
@@ -1218,13 +1219,16 @@ static status_t sql_build_subselect_single_query(plan_assist_t *parent_pa, sql_t
         jnode->cost.startup_cost += pa.tables[0]->startup_cost;
     }
 
-    /* a derived table with a constant LIMIT n produces at most n rows */
+    /* a derived table with a constant LIMIT n produces at most n rows; only the
+       rows of this branch may be clamped, jnode->cost.card already holds the
+       previous branches of a union */
     int64 limit_rows = 0;
+    double branch_card = jnode->cost.card - card_before;
 
-    if (jnode->cost.card > 0 && sql_get_query_limit_rows(query, &limit_rows) &&
-        jnode->cost.card > (double)limit_rows) {
-        jnode->cost.card = (double)limit_rows;
+    if (branch_card > 0 && sql_get_query_limit_rows(query, &limit_rows) && branch_card > (double)limit_rows) {
+        branch_card = (double)limit_rows;
     }
+    jnode->cost.card = card_before + branch_card;
 
     OGSQL_RESTORE_STACK(stmt);
 

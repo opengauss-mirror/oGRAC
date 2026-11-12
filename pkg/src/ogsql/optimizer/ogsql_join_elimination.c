@@ -703,6 +703,9 @@ static status_t check_volatile_expr_node(visit_assist_t *v_ast, expr_node_t **ex
             sql_func->builtin_func_id != ID_FUNC_ITEM_RAND) {
             return visit_func_node(v_ast, origin_exprn, check_volatile_expr_node);
         }
+    } else if (origin_exprn->type == EXPR_NODE_AGGR) {
+        // An aggregate is repeatable from its arguments: COUNT(DISTINCT x) repeats, COUNT(DISTINCT RAND()) does not.
+        return visit_expr_tree(v_ast, origin_exprn->argument, check_volatile_expr_node);
     } else if (origin_exprn->type == EXPR_NODE_CONST || origin_exprn->type == EXPR_NODE_PARAM ||
                origin_exprn->type == EXPR_NODE_COLUMN || origin_exprn->type == EXPR_NODE_TRANS_COLUMN ||
                origin_exprn->type == EXPR_NODE_DIRECT_COLUMN || origin_exprn->type == EXPR_NODE_RESERVED) {
@@ -1562,8 +1565,8 @@ static bool32 og_cond_has_volatile(visit_assist_t *v_ast, cond_tree_t *tree)
 /*
  * Duplicating an input row must not change any evaluated value; a volatile
  * function (SYS_GUID, RAND ...) in a select item, grouping key, aggregate
- * argument, sort key or predicate would break that, so such a query keeps its
- * cartesian join.
+ * argument, sort key, predicate or outer-join condition would break that, so
+ * such a query keeps its cartesian join.
  */
 static bool32 og_qry_has_volatile(sql_stmt_t *statement, sql_query_t *qry)
 {
@@ -1596,8 +1599,8 @@ static bool32 og_qry_has_volatile(sql_stmt_t *statement, sql_query_t *qry)
     i = 0;
     while (i < qry->aggrs->count) {
         exprn = (expr_node_t *)cm_galist_get(qry->aggrs, i++);
-        v_ast.result0 = OG_FALSE;
-        if (visit_expr_node(&v_ast, &exprn, check_volatile_expr_node) != OG_SUCCESS || v_ast.result0) {
+        /* only the aggregate arguments matter: the node itself is never repeatable per row */
+        if (og_tree_has_volatile(&v_ast, exprn->argument)) {
             return OG_TRUE;
         }
     }
@@ -1608,6 +1611,15 @@ static bool32 og_qry_has_volatile(sql_stmt_t *statement, sql_query_t *qry)
             return OG_TRUE;
         }
     }
+    v_ast.result0 = OG_FALSE;
+    if (qry->join_assist.join_node != NULL &&
+        visit_join_node_cond(&v_ast, qry->join_assist.join_node, check_volatile_expr_node) != OG_SUCCESS) {
+        return OG_TRUE;
+    }
+    if (v_ast.result0) {
+        return OG_TRUE;
+    }
+
     return og_cond_has_volatile(&v_ast, qry->cond) || og_cond_has_volatile(&v_ast, qry->having_cond) ||
         og_cond_has_volatile(&v_ast, qry->filter_cond);
 }
@@ -1635,7 +1647,8 @@ static status_t og_probe_leaf(sql_stmt_t *statement, sql_query_t *qry, sql_join_
         return OG_SUCCESS;
     }
     sql_table_t *tbl = TABLE_OF_JOIN_LEAF(leaf);
-    if (tbl == NULL || tbl->type != NORMAL_TABLE || tbl->rowid_exists || tbl->rownodeid_exists) {
+    if (tbl == NULL || tbl->type != NORMAL_TABLE || tbl->rowid_exists || tbl->rownodeid_exists ||
+        tbl->rowscn_exists) {
         return OG_SUCCESS;
     }
     /* every clause creates a query_field on a table it references */
