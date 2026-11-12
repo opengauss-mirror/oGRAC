@@ -54,6 +54,14 @@ typedef enum en_pl_bison_fragment_type {
     PL_BISON_FRAGMENT_COND_TREE
 } pl_bison_fragment_type_t;
 
+/* Bison actions must supply the owning token, not the scanner's current lookahead. */
+static status_t pl_bison_alloc_line(pl_compiler_t *compiler, uint32 size, pl_line_type_t type,
+    source_location_t loc, pl_line_ctrl_t **line)
+{
+    compiler->line_loc = loc;
+    return plc_alloc_line(compiler, size, type, line);
+}
+
 static status_t pl_bison_enter_decl_scope(pl_compiler_t *compiler, pl_bison_decl_scope_t **scope)
 {
     OG_RETURN_IFERR(pl_alloc_mem(compiler->entity, sizeof(pl_bison_decl_scope_t), (void **)scope));
@@ -148,32 +156,38 @@ static status_t check_end_name(const text_t *expected, const char *actual, sourc
 static status_t check_block_end_name(pl_compiler_t *compiler, const text_t *expected,
     const pl_bison_end_name_t *actual, source_location_t loc);
 static status_t check_current_loop_end_name(pl_compiler_t *compiler, const char *actual, source_location_t loc);
-static status_t compile_label_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
-static status_t compile_goto_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
-static status_t compile_raise_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
+static status_t compile_label_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc,
+    source_location_t stmt_loc);
+static status_t compile_goto_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc,
+    source_location_t stmt_loc);
+static status_t compile_raise_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc,
+    source_location_t stmt_loc);
 static status_t compile_pragma_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc);
 static status_t compile_exception_init_pragma(pl_compiler_t *compiler, const PLword *word, int32 err_code,
     source_location_t loc);
 static status_t compile_exit_or_continue_stmt(sql_stmt_t *stmt, bool32 is_continue, const char *label_name,
     text_t *cond_src, source_location_t loc);
-static status_t compile_case_start(sql_stmt_t *stmt, text_t *selector_src, pl_line_case_t **case_line);
-static status_t compile_case_when(core_yyscan_t yyscanner, sql_stmt_t *stmt, text_t *cond_src,
+static status_t compile_case_start(sql_stmt_t *stmt, text_t *selector_src, source_location_t loc,
+    pl_line_case_t **case_line);
+static status_t compile_case_when(sql_stmt_t *stmt, text_t *cond_src, source_location_t loc,
     pl_line_when_case_t **when_line);
 static status_t finish_case_stmt(pl_compiler_t *compiler, galist_t *when_lines, source_location_t loc);
 static status_t compile_exception_start(pl_compiler_t *compiler, source_location_t loc,
     pl_line_except_t **except_line);
 static status_t compile_exception_choice(pl_compiler_t *compiler, const char *name, source_location_t loc,
     void **choice);
-static status_t compile_exception_when(core_yyscan_t yyscanner, sql_stmt_t *stmt, galist_t *choices,
+static status_t compile_exception_when(sql_stmt_t *stmt, galist_t *choices, source_location_t loc,
     pl_line_when_t **when_line);
 static status_t finish_exception_when(pl_compiler_t *compiler);
 static status_t finish_exception_section(pl_compiler_t *compiler, source_location_t loc);
 static status_t compile_cursor_arg_decl(pl_compiler_t *compiler, plv_decl_t *cursor, galist_t *decls,
     const char *name, type_word_t *type, expr_tree_t *def_expr, source_location_t loc);
 static status_t compile_open_cursor_args_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node,
-    source_location_t loc);
-static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc);
-static status_t compile_fetch_bulk_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc);
+    source_location_t loc, source_location_t stmt_loc);
+static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc,
+    source_location_t stmt_loc);
+static status_t compile_fetch_bulk_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc,
+    source_location_t stmt_loc);
 static status_t pl_bison_identifier_at(core_yyscan_t yyscanner, int offset, char **name);
 static status_t compile_for_start_stmt(core_yyscan_t yyscanner, const char *index_name, source_location_t loc,
     pl_line_for_t **for_line);
@@ -525,7 +539,7 @@ block_body_core:
                     pl_line_begin_t *line = NULL;
                     text_t *label_name = current_label_name(compiler);
                     text_t block_name = (label_name == NULL) ? CM_NULL_TEXT : *label_name;
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_begin_t), LINE_BEGIN,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_begin_t), LINE_BEGIN, @2.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(plc_push(compiler, (pl_line_ctrl_t *)line, &block_name));
                     plc_convert_typedecl(compiler, compiler->decls);
@@ -552,8 +566,8 @@ block_body_core:
                         }
                         BISON_ABORT_IFERR(check_block_end_name(compiler, expected_name, &$6, @6.loc));
                     }
-                    compiler->line_loc = @5.loc;
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END,
+
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END, @5.loc,
                         (pl_line_ctrl_t **)&line));
                     if (begin_line != NULL) {
                         begin_line->end = line;
@@ -643,7 +657,7 @@ exception_when_clause:
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     pl_line_when_t *line = NULL;
-                    BISON_ABORT_IFERR(compile_exception_when(yyscanner, stmt, $2, &line));
+                    BISON_ABORT_IFERR(compile_exception_when(stmt, $2, @1.loc, &line));
                 }
             proc_sect
                 {
@@ -725,7 +739,7 @@ stmt_label:
                 {
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
-                    BISON_ABORT_IFERR(compile_label_stmt(compiler, $2, @2.loc));
+                    BISON_ABORT_IFERR(compile_label_stmt(compiler, $2, @2.loc, @1.loc));
                 }
         ;
 
@@ -758,7 +772,7 @@ stmt_null:
                 {
                     pl_compiler_t *compiler = (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     pl_line_ctrl_t *line = NULL;
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_NULL, &line));
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_NULL, @1.loc, &line));
                 }
         ;
 
@@ -790,8 +804,8 @@ stmt_assign:
                             YYABORT;
                         }
                         if (tok == ';') {
-                            BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
-                                (pl_line_ctrl_t **)&line));
+                            BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
+                                @1.loc, (pl_line_ctrl_t **)&line));
                             BISON_ABORT_IFERR(parse_call_from_sql(stmt, left_src, line, @1.loc));
                             BISON_ABORT_IFERR(plc_clone_expr_node(compiler, &line->proc));
                             is_proc_call = OG_TRUE;
@@ -820,7 +834,7 @@ stmt_assign:
                         if (expr_src == NULL) {
                             YYABORT;
                         }
-                        BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
+                        BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL, @1.loc,
                             (pl_line_ctrl_t **)&line));
                         line->left = left;
                         BISON_ABORT_IFERR(plc_check_var_as_left(compiler, line->left, @1.loc, NULL));
@@ -846,7 +860,7 @@ stmt_return:
                     };
                     YYLTYPE return_loc = @1;
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_return_t), LINE_RETURN,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_return_t), LINE_RETURN, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     if ($2->len == 0) {
                         if (compiler->type == PL_FUNCTION) {
@@ -883,9 +897,8 @@ stmt_if:        stmt_if_expr stmt_elsifs stmt_else K_END K_IF ';'
                         pl_line_else_t *else_line = NULL;
                         sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                         pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
-                        compiler->line_loc = @4.loc;
 
-                        BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END_IF,
+                        BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END_IF, @4.loc,
                             (pl_line_ctrl_t **)&line));
                         BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_END_IF, &pop_line));
 
@@ -937,7 +950,7 @@ stmt_proc_call:
                         YYABORT;
                     }
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_normal_t), LINE_SETVAL, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(parse_call_from_sql(stmt, src, line, @1.loc));
                     BISON_ABORT_IFERR(plc_clone_expr_node(compiler, &line->proc));
@@ -960,7 +973,7 @@ loop_start:
                     text_t *label_name = current_label_name(compiler);
                     text_t loop_name = (label_name == NULL) ? CM_NULL_TEXT : *label_name;
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_loop_t), LINE_LOOP,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_loop_t), LINE_LOOP, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(plc_push_ctl(compiler, (pl_line_ctrl_t *)line, &loop_name));
                     line->stack_line = CURR_BLOCK_BEGIN(compiler);
@@ -977,8 +990,7 @@ stmt_loop:
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
 
-                    compiler->line_loc = @3.loc;
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP, @3.loc,
                         (pl_line_ctrl_t **)&end_line));
                     BISON_ABORT_IFERR(check_current_loop_end_name(compiler, $5, @5.loc));
                     BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_END_LOOP, &pop_line));
@@ -996,7 +1008,7 @@ while_start:
                     text_t *label_name = current_label_name(compiler);
                     text_t loop_name = (label_name == NULL) ? CM_NULL_TEXT : *label_name;
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_while_t), LINE_WHILE,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_while_t), LINE_WHILE, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(get_valid_cond_tree(stmt, $2, &line->cond));
                     BISON_ABORT_IFERR(plc_verify_cond(compiler, line->cond));
@@ -1017,8 +1029,7 @@ stmt_while:
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
 
-                    compiler->line_loc = @3.loc;
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP, @3.loc,
                         (pl_line_ctrl_t **)&end_line));
                     BISON_ABORT_IFERR(check_current_loop_end_name(compiler, $5, @5.loc));
                     BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_END_LOOP, &pop_line));
@@ -1062,8 +1073,7 @@ stmt_for:
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
 
-                    compiler->line_loc = @3.loc;
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP, @3.loc,
                         (pl_line_ctrl_t **)&end_line));
                     BISON_ABORT_IFERR(check_current_loop_end_name(compiler, $5, @5.loc));
                     BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_END_LOOP, &pop_line));
@@ -1115,19 +1125,19 @@ stmt_open:
                     if (decl->cursor.ogx->is_sysref || decl->cursor.ogx->context == NULL) {
                         parser_yyerror("explicit cursor expected");
                     }
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_open_t), LINE_OPEN,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_open_t), LINE_OPEN, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     line->vid = decl->vid;
                     line->exprs = NULL;
                 }
             | K_OPEN T_DATUM '('
                 {
-                    BISON_ABORT_IFERR(compile_open_cursor_args_stmt(yyscanner, $2, @2.loc));
+                    BISON_ABORT_IFERR(compile_open_cursor_args_stmt(yyscanner, $2, @2.loc, @1.loc));
                 }
             ';'
             | K_OPEN T_DATUM K_FOR
                 {
-                    BISON_ABORT_IFERR(compile_open_for_stmt(yyscanner, $2, @2.loc));
+                    BISON_ABORT_IFERR(compile_open_for_stmt(yyscanner, $2, @2.loc, @1.loc));
                 }
         ;
 
@@ -1150,7 +1160,7 @@ stmt_fetch:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
 
                     BISON_ABORT_IFERR(find_cursor_decl_by_node(compiler, $2, @2.loc, &decl));
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_fetch_t), LINE_FETCH,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_fetch_t), LINE_FETCH, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     line->vid = decl->vid;
                     line->into.output = $4;
@@ -1171,7 +1181,7 @@ stmt_fetch:
                 }
             | K_FETCH T_DATUM K_BULK
                 {
-                    BISON_ABORT_IFERR(compile_fetch_bulk_stmt(yyscanner, $2, @2.loc));
+                    BISON_ABORT_IFERR(compile_fetch_bulk_stmt(yyscanner, $2, @2.loc, @1.loc));
                 }
         ;
 
@@ -1184,7 +1194,7 @@ stmt_close:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
 
                     BISON_ABORT_IFERR(find_cursor_decl_by_node(compiler, $2, @2.loc, &decl));
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_close_t), LINE_CLOSE,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_close_t), LINE_CLOSE, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     line->vid = decl->vid;
                 }
@@ -1221,7 +1231,7 @@ stmt_sql:
                         YYABORT;
                     }
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
                     BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_SELECT, @1.loc, line));
@@ -1236,7 +1246,7 @@ stmt_sql:
                         YYABORT;
                     }
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
                     BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_INSERT, @1.loc, line));
@@ -1251,7 +1261,7 @@ stmt_sql:
                         YYABORT;
                     }
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
                     BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_UPDATE, @1.loc, line));
@@ -1266,7 +1276,7 @@ stmt_sql:
                         YYABORT;
                     }
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
                     BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_DELETE, @1.loc, line));
@@ -1281,7 +1291,7 @@ stmt_sql:
                         YYABORT;
                     }
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
                     BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_MERGE, @1.loc, line));
@@ -1296,7 +1306,7 @@ stmt_sql:
                         YYABORT;
                     }
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
                     BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_REPLACE, @1.loc, line));
@@ -1311,7 +1321,7 @@ stmt_sql:
                         YYABORT;
                     }
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(plc_init_galist(compiler, &line->input));
                     BISON_ABORT_IFERR(compile_static_sql_line(stmt, src, KEY_WORD_WITH, @1.loc, line));
@@ -1324,7 +1334,8 @@ stmt_commit:
                     pl_line_ctrl_t *line = NULL;
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_COMMIT, &line));
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_COMMIT,
+                        @1.loc, &line));
                 }
         ;
 
@@ -1334,7 +1345,7 @@ stmt_rollback:
                     pl_line_rollback_t *line = NULL;
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     line->savepoint = CM_NULL_TEXT;
                 }
@@ -1345,7 +1356,7 @@ stmt_rollback:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     text_t name;
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     cm_str2text($3.ident, &name);
                     BISON_ABORT_IFERR(pl_copy_text(compiler->entity, &name, &line->savepoint));
@@ -1357,7 +1368,7 @@ stmt_rollback:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     text_t name;
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_rollback_t), LINE_ROLLBACK, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     cm_str2text($4.ident, &name);
                     BISON_ABORT_IFERR(pl_copy_text(compiler->entity, &name, &line->savepoint));
@@ -1372,7 +1383,7 @@ stmt_savepoint:
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
                     text_t name;
 
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_savepoint_t), LINE_SAVEPOINT,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_savepoint_t), LINE_SAVEPOINT, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     cm_str2text($2.ident, &name);
                     BISON_ABORT_IFERR(pl_copy_text(compiler->entity, &name, &line->savepoint));
@@ -1393,7 +1404,7 @@ case_start:
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     pl_line_case_t *line = NULL;
-                    BISON_ABORT_IFERR(compile_case_start(stmt, $2, &line));
+                    BISON_ABORT_IFERR(compile_case_start(stmt, $2, @1.loc, &line));
                     $$ = line;
                 }
         ;
@@ -1407,9 +1418,9 @@ case_when_list:
                     BISON_ABORT_IFERR(cm_galist_insert(list, $1));
                     $$ = list;
                 }
-            | case_when_list K_WHEN case_when_clause
+            | case_when_list case_when_clause
                 {
-                    BISON_ABORT_IFERR(cm_galist_insert($1, $3));
+                    BISON_ABORT_IFERR(cm_galist_insert($1, $2));
                     $$ = $1;
                 }
         ;
@@ -1419,11 +1430,11 @@ case_when_clause:
         ;
 
 case_when_header:
-            expr_until_then
+            K_WHEN expr_until_then
                 {
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     pl_line_when_case_t *line = NULL;
-                    BISON_ABORT_IFERR(compile_case_when(yyscanner, stmt, $1, &line));
+                    BISON_ABORT_IFERR(compile_case_when(stmt, $2, @1.loc, &line));
                     $$ = line;
                 }
         ;
@@ -1433,7 +1444,7 @@ stmt_goto:
                 {
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
-                    BISON_ABORT_IFERR(compile_goto_stmt(compiler, $2, @2.loc));
+                    BISON_ABORT_IFERR(compile_goto_stmt(compiler, $2, @2.loc, @1.loc));
                 }
         ;
 
@@ -1442,13 +1453,13 @@ stmt_raise:
                 {
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
-                    BISON_ABORT_IFERR(compile_raise_stmt(compiler, NULL, @1.loc));
+                    BISON_ABORT_IFERR(compile_raise_stmt(compiler, NULL, @1.loc, @1.loc));
                 }
             | K_RAISE label_name ';'
                 {
                     pl_compiler_t *compiler =
                         (pl_compiler_t*)og_yyget_extra(yyscanner)->core_yy_extra.stmt->pl_compiler;
-                    BISON_ABORT_IFERR(compile_raise_stmt(compiler, $2, @2.loc));
+                    BISON_ABORT_IFERR(compile_raise_stmt(compiler, $2, @2.loc, @1.loc));
                 }
         ;
 
@@ -1465,7 +1476,7 @@ stmt_if_expr:
                     pl_line_if_t *line = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
-                    BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_if_t), LINE_IF,
+                    BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_if_t), LINE_IF, @1.loc,
                         (pl_line_ctrl_t **)&line));
                     BISON_ABORT_IFERR(get_valid_cond_tree(stmt, $2, &line->cond));
                     BISON_ABORT_IFERR(plc_verify_cond(compiler, line->cond));
@@ -1483,8 +1494,8 @@ stmt_elsifs:    /* EMPTY */
                         pl_line_ctrl_t *brother_line = NULL;
                         sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                         pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
-                        compiler->line_loc = @2.loc;
-                        BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_elsif_t), LINE_ELIF,
+
+                        BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_elsif_t), LINE_ELIF, @2.loc,
                             (pl_line_ctrl_t **)&line));
                         BISON_ABORT_IFERR(get_valid_cond_tree(stmt, $3, &line->cond));
                         BISON_ABORT_IFERR(plc_verify_cond(compiler, line->cond));
@@ -1506,8 +1517,8 @@ stmt_else:      /* EMPTY */
                         pl_line_else_t *else_line = NULL;
                         sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                         pl_compiler_t *compiler = (pl_compiler_t*)stmt->pl_compiler;
-                        compiler->line_loc = @1.loc;
-                        BISON_ABORT_IFERR(plc_alloc_line(compiler, sizeof(pl_line_else_t), LINE_ELSE,
+
+                        BISON_ABORT_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_else_t), LINE_ELSE, @1.loc,
                             (pl_line_ctrl_t **)&else_line));
                         BISON_ABORT_IFERR(plc_pop(compiler, compiler->line_loc, PBE_ELSE,
                             (pl_line_ctrl_t **)&brother_line));
@@ -1556,10 +1567,13 @@ expr_until_range:
 
 expr_until_when:
                 {
-                    $$ = read_sql_expression(K_WHEN, yyscanner);
+                    int endtoken;
+                    $$ = read_sql_expression2(K_WHEN, 0, yyscanner, &endtoken);
                     if ($$ == NULL) {
                         YYABORT;
                     }
+                    /* Keep the first WHEN on the grammar stack, including its location. */
+                    plsql_push_back_token(endtoken, yyscanner);
                 }
         ;
 
@@ -2833,26 +2847,30 @@ static status_t add_label_line(pl_compiler_t *compiler, pl_line_ctrl_t *line)
     return OG_SUCCESS;
 }
 
-static status_t compile_label_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc)
+static status_t compile_label_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc,
+    source_location_t stmt_loc)
 {
     word_t word;
     pl_line_label_t *line = NULL;
 
     init_word_from_name(&word, name, loc);
     OG_RETURN_IFERR(plc_label_name_verify(compiler, &word));
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_label_t), LINE_LABEL, (pl_line_ctrl_t **)&line));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_label_t), LINE_LABEL,
+        stmt_loc, (pl_line_ctrl_t **)&line));
     OG_RETURN_IFERR(pl_copy_object_name_ci(compiler->entity, word.type, (text_t *)&word.text, &line->name));
     line->stack_line = CURR_BLOCK_BEGIN(compiler);
     return add_label_line(compiler, (pl_line_ctrl_t *)line);
 }
 
-static status_t compile_goto_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc)
+static status_t compile_goto_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc,
+    source_location_t stmt_loc)
 {
     word_t word;
     pl_line_goto_t *line = NULL;
 
     init_word_from_name(&word, name, loc);
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_goto_t), LINE_GOTO, (pl_line_ctrl_t **)&line));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_goto_t), LINE_GOTO,
+        stmt_loc, (pl_line_ctrl_t **)&line));
     return pl_copy_object_name_ci(compiler->entity, word.type, (text_t *)&word.text, &line->label);
 }
 
@@ -2881,13 +2899,15 @@ static status_t compile_raise_decl(pl_compiler_t *compiler, plv_decl_t *decl, wo
     return OG_SUCCESS;
 }
 
-static status_t compile_raise_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc)
+static status_t compile_raise_stmt(pl_compiler_t *compiler, const char *name, source_location_t loc,
+    source_location_t stmt_loc)
 {
     word_t word;
     pl_line_raise_t *line = NULL;
     plv_decl_t *decl = NULL;
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_raise_t), LINE_RAISE, (pl_line_ctrl_t **)&line));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_raise_t), LINE_RAISE,
+        stmt_loc, (pl_line_ctrl_t **)&line));
     if (name != NULL) {
         init_word_from_name(&word, name, loc);
         OG_RETURN_IFERR(plc_verify_word_as_var(compiler, &word));
@@ -2938,13 +2958,14 @@ static status_t compile_exit_or_continue_stmt(sql_stmt_t *stmt, bool32 is_contin
 
     if (is_continue) {
         pl_line_continue_t *line = NULL;
-        OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_continue_t), LINE_CONTINUE,
+        OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_continue_t), LINE_CONTINUE, loc,
             (pl_line_ctrl_t **)&line));
         cond = &line->cond;
         next = &line->next;
     } else {
         pl_line_exit_t *line = NULL;
-        OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_exit_t), LINE_EXIT, (pl_line_ctrl_t **)&line));
+        OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_exit_t), LINE_EXIT,
+            loc, (pl_line_ctrl_t **)&line));
         cond = &line->cond;
         next = &line->next;
     }
@@ -3538,11 +3559,13 @@ static expr_tree_t *current_case_selector(pl_compiler_t *compiler)
     return NULL;
 }
 
-static status_t compile_case_start(sql_stmt_t *stmt, text_t *selector_src, pl_line_case_t **case_line)
+static status_t compile_case_start(sql_stmt_t *stmt, text_t *selector_src, source_location_t loc,
+    pl_line_case_t **case_line)
 {
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_case_t), LINE_CASE, (pl_line_ctrl_t **)case_line));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_case_t), LINE_CASE,
+        loc, (pl_line_ctrl_t **)case_line));
     if (selector_src->len == 0) {
         (*case_line)->selector = NULL;
     } else {
@@ -3554,7 +3577,7 @@ static status_t compile_case_start(sql_stmt_t *stmt, text_t *selector_src, pl_li
     return plc_push_ctl(compiler, (pl_line_ctrl_t *)*case_line, &CM_NULL_TEXT);
 }
 
-static status_t compile_case_when(core_yyscan_t yyscanner, sql_stmt_t *stmt, text_t *cond_src,
+static status_t compile_case_when(sql_stmt_t *stmt, text_t *cond_src, source_location_t loc,
     pl_line_when_case_t **when_line)
 {
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
@@ -3562,11 +3585,14 @@ static status_t compile_case_when(core_yyscan_t yyscanner, sql_stmt_t *stmt, tex
     expr_tree_t *selector = current_case_selector(compiler);
 
     if (compiler->control_stack.depth == 0) {
-        OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_UNEXPECTED_FMT, "CASE WHEN");
+        OG_SRC_THROW_ERROR(loc, ERR_PL_UNEXPECTED_FMT, "CASE WHEN");
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_when_case_t), LINE_WHEN_CASE,
+    pl_line_ctrl_t *header = compiler->control_stack.items[compiler->control_stack.depth - 1].entry;
+    /* The native compiler anchors the first searched WHEN at CASE. */
+    source_location_t line_loc = (header->type == LINE_CASE && selector == NULL) ? header->loc : loc;
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_when_case_t), LINE_WHEN_CASE, line_loc,
         (pl_line_ctrl_t **)when_line));
     if (selector == NULL) {
         OG_RETURN_IFERR(get_valid_cond_tree(stmt, cond_src, (cond_tree_t **)&(*when_line)->cond));
@@ -3578,7 +3604,7 @@ static status_t compile_case_when(core_yyscan_t yyscanner, sql_stmt_t *stmt, tex
         OG_RETURN_IFERR(pl_bison_clone_expr_tree(compiler, (expr_tree_t **)&(*when_line)->cond));
     }
 
-    OG_RETURN_IFERR(plc_pop(compiler, PLSQL_YYLLOC(yyscanner)->loc, PBE_WHEN_CASE, &brother_line));
+    OG_RETURN_IFERR(plc_pop(compiler, loc, PBE_WHEN_CASE, &brother_line));
     (*when_line)->if_line = (brother_line->type == LINE_CASE) ? NULL : (pl_line_if_t *)brother_line;
     (*when_line)->t_line = NULL;
     (*when_line)->selector = selector;
@@ -3594,7 +3620,7 @@ static status_t finish_case_stmt(pl_compiler_t *compiler, galist_t *when_lines, 
     pl_line_ctrl_t *brother_line = NULL;
     expr_tree_t *selector = current_case_selector(compiler);
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_when_case_t), LINE_END_CASE,
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_when_case_t), LINE_END_CASE, loc,
         (pl_line_ctrl_t **)&end_case));
     OG_RETURN_IFERR(plc_pop(compiler, loc, PBE_END_CASE, &brother_line));
     if (brother_line->type == LINE_WHEN_CASE) {
@@ -3630,7 +3656,7 @@ static status_t compile_exception_start(pl_compiler_t *compiler, source_location
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_except_t), LINE_EXCEPTION,
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_except_t), LINE_EXCEPTION, loc,
         (pl_line_ctrl_t **)except_line));
     OG_RETURN_IFERR(plc_init_galist(compiler, &(*except_line)->excpts));
     begin_line->except = (pl_line_ctrl_t *)*except_line;
@@ -3656,7 +3682,7 @@ static status_t compile_exception_choice(pl_compiler_t *compiler, const char *na
     return OG_SUCCESS;
 }
 
-static status_t compile_exception_when(core_yyscan_t yyscanner, sql_stmt_t *stmt, galist_t *choices,
+static status_t compile_exception_when(sql_stmt_t *stmt, galist_t *choices, source_location_t loc,
     pl_line_when_t **when_line)
 {
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
@@ -3670,11 +3696,12 @@ static status_t compile_exception_when(core_yyscan_t yyscanner, sql_stmt_t *stmt
     }
 
     if (begin_line == NULL || begin_line->except == NULL) {
-        OG_SRC_THROW_ERROR(PLSQL_YYLLOC(yyscanner)->loc, ERR_PL_UNEXPECTED_FMT, "WHEN");
+        OG_SRC_THROW_ERROR(loc, ERR_PL_UNEXPECTED_FMT, "WHEN");
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_when_t), LINE_WHEN, (pl_line_ctrl_t **)when_line));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_when_t), LINE_WHEN,
+        loc, (pl_line_ctrl_t **)when_line));
     cm_galist_init(&(*when_line)->excepts, compiler->entity, pl_alloc_mem);
 
     for (uint32 i = 0; i < choices->count; i++) {
@@ -3696,10 +3723,11 @@ static status_t compile_exception_when(core_yyscan_t yyscanner, sql_stmt_t *stmt
     return cm_galist_insert(((pl_line_except_t *)begin_line->except)->excpts, *when_line);
 }
 
+/* Synthetic exception ends inherit the preceding line for debugger stepping. */
 static status_t finish_exception_when(pl_compiler_t *compiler)
 {
     pl_line_ctrl_t *line_end = NULL;
-    return plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END_WHEN, &line_end);
+    return pl_bison_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END_WHEN, compiler->last_line->loc, &line_end);
 }
 
 static status_t finish_exception_section(pl_compiler_t *compiler, source_location_t loc)
@@ -3707,7 +3735,8 @@ static status_t finish_exception_section(pl_compiler_t *compiler, source_locatio
     pl_line_ctrl_t *except_end = NULL;
     pl_line_ctrl_t *pop_line = NULL;
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END_EXCEPTION, &except_end));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_ctrl_t), LINE_END_EXCEPTION,
+        compiler->last_line->loc, &except_end));
     OG_RETURN_IFERR(plc_pop(compiler, loc, PBE_END_EXCEPTION, &pop_line));
     ((pl_line_except_t *)pop_line)->end = except_end;
     return OG_SUCCESS;
@@ -4448,8 +4477,8 @@ static status_t compile_execute_immediate_stmt(core_yyscan_t yyscanner, source_l
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     int endtoken = 0;
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_execute_t), LINE_EXECUTE, (pl_line_ctrl_t **)&line));
-    line->ctrl.loc = loc;
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_execute_t), LINE_EXECUTE,
+        loc, (pl_line_ctrl_t **)&line));
     dynamic_sql_src = read_sql_construct(K_INTO, K_BULK, K_USING, ';', 0, 0, yyscanner, &endtoken);
     if (dynamic_sql_src == NULL) {
         return OG_ERROR;
@@ -4735,7 +4764,7 @@ static status_t compile_open_arg_list(core_yyscan_t yyscanner, pl_compiler_t *co
 }
 
 static status_t compile_open_cursor_args_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node,
-    source_location_t loc)
+    source_location_t loc, source_location_t stmt_loc)
 {
     pl_line_open_t *line = NULL;
     plv_decl_t *decl = NULL;
@@ -4749,7 +4778,8 @@ static status_t compile_open_cursor_args_stmt(core_yyscan_t yyscanner, expr_node
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_open_t), LINE_OPEN, (pl_line_ctrl_t **)&line));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_open_t), LINE_OPEN,
+        stmt_loc, (pl_line_ctrl_t **)&line));
     line->vid = decl->vid;
     OG_RETURN_IFERR(plc_init_galist(compiler, &line->exprs));
     OG_RETURN_IFERR(compile_open_arg_list(yyscanner, compiler, line->exprs, &endtoken));
@@ -4810,7 +4840,8 @@ static status_t compile_refcur_using_clause(core_yyscan_t yyscanner, pl_compiler
     }
 }
 
-static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc)
+static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc,
+    source_location_t stmt_loc)
 {
     pl_line_open_t *line = NULL;
     plv_decl_t *decl = NULL;
@@ -4827,7 +4858,8 @@ static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *curs
         return OG_ERROR;
     }
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_open_t), LINE_OPEN, (pl_line_ctrl_t **)&line));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_open_t), LINE_OPEN,
+        stmt_loc, (pl_line_ctrl_t **)&line));
     line->vid = decl->vid;
     tok = PLSQL_YYLEX(yyscanner);
     if (tok == LEX_ERROR_TOKEN) {
@@ -4877,7 +4909,8 @@ static status_t compile_open_for_stmt(core_yyscan_t yyscanner, expr_node_t *curs
     return OG_SUCCESS;
 }
 
-static status_t compile_fetch_bulk_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc)
+static status_t compile_fetch_bulk_stmt(core_yyscan_t yyscanner, expr_node_t *cursor_node, source_location_t loc,
+    source_location_t stmt_loc)
 {
     pl_line_fetch_t *line = NULL;
     plv_decl_t *decl = NULL;
@@ -4887,7 +4920,8 @@ static status_t compile_fetch_bulk_stmt(core_yyscan_t yyscanner, expr_node_t *cu
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
 
     OG_RETURN_IFERR(find_cursor_decl_by_node(compiler, cursor_node, loc, &decl));
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_fetch_t), LINE_FETCH, (pl_line_ctrl_t **)&line));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_fetch_t), LINE_FETCH,
+        stmt_loc, (pl_line_ctrl_t **)&line));
     line->vid = decl->vid;
     OG_RETURN_IFERR(compile_execute_bulk_into_clause(yyscanner, compiler, &line->into, &endtoken));
     if (endtoken == K_LIMIT) {
@@ -4938,13 +4972,13 @@ static status_t copy_context_rscols_to_record(pl_compiler_t *compiler, sql_conte
 }
 
 static status_t init_for_line_common(pl_compiler_t *compiler, const char *index_name, pl_line_for_t **for_line,
-    bool32 is_cursor)
+    bool32 is_cursor, source_location_t loc)
 {
     text_t idx_name;
     text_t *label_name = current_label_name(compiler);
     text_t loop_name = (label_name == NULL) ? CM_NULL_TEXT : *label_name;
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_for_t), LINE_FOR, (pl_line_ctrl_t **)for_line));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_for_t), LINE_FOR, loc, (pl_line_ctrl_t **)for_line));
     OG_RETURN_IFERR(plc_init_galist(compiler, &(*for_line)->decls));
     OG_RETURN_IFERR(cm_galist_new((*for_line)->decls, sizeof(plv_decl_t), (void **)&(*for_line)->id));
     (*for_line)->id->vid.block = (int16)compiler->stack.depth;
@@ -5110,7 +5144,7 @@ static status_t finish_numeric_for_start(core_yyscan_t yyscanner, const char *in
 
     OG_RETURN_IFERR(read_sql_expression_from_token(PLSQL_YYLEX(yyscanner), K_LOOP, yyscanner, &upper_src,
         &upper_node, &upper_loc));
-    OG_RETURN_IFERR(init_for_line_common(compiler, index_name, for_line, OG_FALSE));
+    OG_RETURN_IFERR(init_for_line_common(compiler, index_name, for_line, OG_FALSE, loc));
     (*for_line)->id->type = PLV_VAR;
     (*for_line)->id->variant.type.datatype = OG_TYPE_INTEGER;
     OG_RETURN_IFERR(compile_for_bound_expr(stmt, compiler, lower_src, lower_node, lower_loc,
@@ -5129,7 +5163,7 @@ static status_t finish_implicit_cursor_for_query(core_yyscan_t yyscanner, const 
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
     pl_entity_t *entity = (pl_entity_t *)compiler->entity;
 
-    OG_RETURN_IFERR(init_for_line_common(compiler, index_name, for_line, OG_TRUE));
+    OG_RETURN_IFERR(init_for_line_common(compiler, index_name, for_line, OG_TRUE, loc));
     OG_RETURN_IFERR(init_for_cursor_record(compiler, *for_line));
     (*for_line)->is_impcur = OG_TRUE;
     OG_RETURN_IFERR(cm_galist_new((*for_line)->decls, sizeof(plv_decl_t), (void **)&imp_cur));
@@ -5214,7 +5248,7 @@ static status_t finish_explicit_cursor_for_start(core_yyscan_t yyscanner, const 
         OG_SRC_THROW_ERROR(loc, ERR_INVALID_CURSOR);
         return OG_ERROR;
     }
-    OG_RETURN_IFERR(init_for_line_common(compiler, index_name, for_line, OG_TRUE));
+    OG_RETURN_IFERR(init_for_line_common(compiler, index_name, for_line, OG_TRUE, loc));
     OG_RETURN_IFERR(init_for_cursor_record(compiler, *for_line));
     (*for_line)->is_impcur = OG_FALSE;
     (*for_line)->cursor_id = decl->vid;
@@ -5316,6 +5350,7 @@ static status_t compile_forall_stmt(core_yyscan_t yyscanner, const char *index_n
     int endtoken = 0;
     key_wid_t key_wid;
     source_location_t dml_loc;
+    source_location_t end_loc;
     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
     pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
 
@@ -5339,7 +5374,7 @@ static status_t compile_forall_stmt(core_yyscan_t yyscanner, const char *index_n
         return pl_expected_token_error(yyscanner, loc, "DML statement", endtoken);
     }
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_for_t), LINE_FOR, (pl_line_ctrl_t **)&line));
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_for_t), LINE_FOR, loc, (pl_line_ctrl_t **)&line));
     OG_RETURN_IFERR(plc_init_galist(compiler, &line->decls));
     OG_RETURN_IFERR(cm_galist_new(line->decls, sizeof(plv_decl_t), (void **)&line->id));
     line->id->vid.block = (int16)compiler->stack.depth;
@@ -5376,11 +5411,13 @@ static status_t compile_forall_stmt(core_yyscan_t yyscanner, const char *index_n
     if (endtoken != ';') {
         return pl_expected_token_error(yyscanner, loc, "';'", endtoken);
     }
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL, (pl_line_ctrl_t **)&sql_line));
+    end_loc = PLSQL_YYLLOC(yyscanner)->loc;
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_sql_t), LINE_SQL,
+        dml_loc, (pl_line_ctrl_t **)&sql_line));
     OG_RETURN_IFERR(plc_init_galist(compiler, &sql_line->input));
     OG_RETURN_IFERR(compile_static_sql_line(stmt, dml_src, key_wid, dml_loc, sql_line));
 
-    OG_RETURN_IFERR(plc_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP,
+    OG_RETURN_IFERR(pl_bison_alloc_line(compiler, sizeof(pl_line_end_loop_t), LINE_END_LOOP, end_loc,
         (pl_line_ctrl_t **)&end_line));
     OG_RETURN_IFERR(plc_pop(compiler, loc, PBE_END_LOOP, &pop_line));
     end_line->loop = pop_line;

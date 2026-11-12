@@ -476,7 +476,7 @@ SQL> create or replace function bison_pl_depth_if_guard(num int) return clob
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_PL_DEPTH_IF_GUARD) terminated with compiling errors
-PLC-00943 PL/SQL: block too complex, depth exceed the limitation 128
+[260:5] PLC-00943 PL/SQL: block too complex, depth exceed the limitation 128
 
 
 SQL> 
@@ -750,7 +750,7 @@ SQL> create or replace procedure bison_pl_depth_block_guard as
 Succeed.
 Warning:
 PL/SQL(SYS.BISON_PL_DEPTH_BLOCK_GUARD) terminated with compiling errors
-PLC-00943 PL/SQL: block too complex, depth exceed the limitation 128
+[130:5] PLC-00943 PL/SQL: block too complex, depth exceed the limitation 128
 
 
 SQL> 
@@ -4592,6 +4592,167 @@ SQL> CALL BISON_LAC_QUOTED_PROC();
 PL/SQL procedure successfully completed.
 
 SQL> DROP PROCEDURE BISON_LAC_QUOTED_PROC;
+
+Succeed.
+
+SQL>
+SQL> begin
+  2 	DBE_STD.THROW_EXCEPTION (0, '特殊值0'); --error
+  3 end;
+  4 /
+
+OG-00932, [2:2] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[2:2] PL/SQL(DBE_STD.THROW_EXCEPTION) terminated with execute errors
+[2:27] OG-00614, Parameter error: error number argument to throw_exception is out of range(-20999..-20000)
+
+SQL>
+SQL> DECLARE
+  2     z INT := 0;
+  3 BEGIN
+  4     BEGIN
+  5         NULL;
+  6     END;
+  7     z := 1 / z;
+  8 END;
+  9 /
+
+OG-00932, [7:5] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[7:10] OG-00637, The divisor was zero
+
+SQL>
+SQL> DECLARE
+  2     z INT := 0;
+  3     v INT := 1 / z;
+  4 BEGIN
+  5     NULL;
+  6 END;
+  7 /
+
+OG-00932, [4:1] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[3:14] OG-00637, The divisor was zero
+
+SQL>
+SQL> DECLARE
+  2     z INT := 0;
+  3 BEGIN
+  4     CASE
+  5         WHEN 1 / z > 0 THEN NULL;
+  6         ELSE NULL;
+  7     END CASE;
+  8 END;
+  9 /
+
+OG-00932, [4:5] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[5:14] OG-00637, The divisor was zero
+
+SQL>
+SQL> DECLARE
+  2     CURSOR c IS SELECT 1 FROM sys_dummy;
+  3 BEGIN
+  4     CLOSE c;
+  5 END;
+  6 /
+
+OG-00932, [4:5] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[4:5] OG-00905, The cursor was invalid.
+
+SQL>
+SQL> BEGIN
+  2     GOTO pl_loc_missing;
+  3 END;
+  4 /
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[2:5] PLC-00916 PL/SQL:syntax error(PL_LOC_MISSING is an invalid label)
+
+SQL>
+SQL> DROP TABLE IF EXISTS BISON_LINE_LOC_T PURGE;
+
+Succeed.
+
+SQL> CREATE TABLE BISON_LINE_LOC_T (n INT);
+
+Succeed.
+
+SQL> DECLARE
+  2     z INT := 0;
+  3 BEGIN
+  4     FORALL i IN 1 .. 1
+  5         INSERT INTO BISON_LINE_LOC_T VALUES (1 / z);
+  6 END;
+  7 /
+
+OG-00932, [5:9] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[5:46] OG-00637, The divisor was zero
+
+SQL> DROP TABLE BISON_LINE_LOC_T PURGE;
+
+Succeed.
+
+SQL>
+SQL> DECLARE
+  2     z INT := 0;
+  3 BEGIN
+  4     CASE
+  5         WHEN FALSE THEN NULL;
+  6         WHEN 1 / z > 0 THEN NULL;
+  7         ELSE NULL;
+  8     END CASE;
+  9 END;
+ 10 /
+
+OG-00932, [6:9] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[6:14] OG-00637, The divisor was zero
+
+SQL>
+SQL> BEGIN
+  2     CASE 2
+  3         WHEN 1 THEN NULL;
+  4         WHEN 2 THEN
+  5             CASE
+  6                 WHEN TRUE THEN DBE_OUTPUT.PRINT_LINE(17);
+  7                 ELSE DBE_OUTPUT.PRINT_LINE(99);
+  8             END CASE;
+  9         ELSE DBE_OUTPUT.PRINT_LINE(98);
+ 10     END CASE;
+ 11 END;
+ 12 /
+
+17
+
+PL/SQL procedure successfully completed.
+
+SQL>
+SQL> CREATE OR REPLACE PROCEDURE BISON_LINE_LOC_EXCEPT AS
+  2 BEGIN
+  3     RAISE NO_DATA_FOUND;
+  4 EXCEPTION
+  5     WHEN NO_DATA_FOUND THEN
+  6         BEGIN
+  7             NULL;
+  8         END;
+  9 END;
+ 10 /
+
+Succeed.
+
+SQL> CALL BISON_LINE_LOC_EXCEPT();
+
+PL/SQL procedure successfully completed.
+
+SQL> SELECT LINE_TYPE, LOC_LINE
+  2 FROM TABLE(DBA_PROC_DECODE('SYS', 'BISON_LINE_LOC_EXCEPT', 'PROCEDURE'))
+  3 WHERE LINE_TYPE IN ('LINE_END_WHEN', 'LINE_END_EXCEPTION')
+  4 ORDER BY LINE_NUM;
+
+LINE_TYPE                        LOC_LINE
+-------------------------------- ------------
+LINE_END_WHEN                    8
+LINE_END_EXCEPTION               8
+
+2 rows fetched.
+
+SQL> DROP PROCEDURE BISON_LINE_LOC_EXCEPT;
 
 Succeed.
 
