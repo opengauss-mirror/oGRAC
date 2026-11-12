@@ -3721,6 +3721,15 @@ SQL> insert into func_res_test_bison(result) SELECT TRIM( '123sfd111','1');
 1 rows affected.
 
 SQL> 
+SQL> select insert('abc', 2, 1, 'X') as r1, insert /*+ RULE */ ('abc', 2, 1, 'X') as r2 from sys_dummy;
+
+R1   R2
+---- ----
+aXc  aXc
+
+1 rows fetched.
+
+SQL>
 SQL> select * from func_res_test_bison order by id;
 
 ID                   RESULT                                                          
