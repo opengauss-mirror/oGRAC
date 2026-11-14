@@ -1236,6 +1236,7 @@ typedef struct st_sql_table {
 
     bool32 rowid_exists : 1;       // rowid exist in where clause or not
     bool32 rownodeid_exists : 1;   // rownodeid exist in where clause or not
+    bool32 rowscn_exists : 1;      // rowscn referenced by any clause or not
     bool32 rs_nullable : 1;        // record whether rs_columns in current table can be nullable or not
     bool32 has_hidden_columns : 1; // indicates table has virtual, invisible column
     bool32 global_cached : 1;      // cached scan pages into global CR pool or not

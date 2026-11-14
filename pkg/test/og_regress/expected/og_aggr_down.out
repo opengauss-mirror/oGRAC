@@ -622,19 +622,21 @@ SQL> EXPLAIN SELECT d.dept_name, MIN(d.dept_id) FROM employees e cross join  dep
 
 EXPLAIN PLAN OUTPUT                                             
 ----------------------------------------------------------------
-------------------------------------------------------------------------------------------------------------
-| Id | Operation                       | Owner | Name          | Rows  | Cost | StartCost | Bytes | Remark |
-------------------------------------------------------------------------------------------------------------
-| 0  | SELECT STATEMENT                |       |               | 1403  | 947  | 15        |       |        |
-| 1  |   HASH GROUP BY                 |       |               | 1403  | 947  | 15        |       |        |
-| 2  |     NESTED LOOPS                |       |               | 14036 | 434  | 0         |       |        |
-| 3  |         SUBSELECT               | SYS   | DEPARTMENTS D | 116   | 2    | 0         |       |        |
-| 4  |           HASH GROUP BY         |       |               | 11    | 21   | 8         |       |        |
-| 5  |               TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116   | 2    | 0         |       |        |
-| 6  |         TABLE ACCESS FULL       | SYS   | EMPLOYEES E   | 121   | 2    | 0         |       |        |
-------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------
+| Id | Operation                       | Owner | Name          | Rows | Cost | StartCost | Bytes | Remark |
+-----------------------------------------------------------------------------------------------------------
+| 0  | SELECT STATEMENT                |       |               | 11   | 28   | 8         |       |        |
+| 1  |   HASH GROUP BY                 |       |               | 11   | 28   | 8         |       |        |
+| 2  |     NESTED LOOPS                |       |               | 116  | 6    | 0         |       |        |
+| 3  |         SUBSELECT               | SYS   | EMPLOYEES E   | 1    | 2    | 0         |       |        |
+| 4  |           QUERY LIMIT           |       |               | 1    | 0    | 0         |       |        |
+| 5  |               TABLE ACCESS FULL | SYS   | EMPLOYEES E   | 121  | 2    | 0         |       |        |
+| 6  |         SUBSELECT               | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
+| 7  |           HASH GROUP BY         |       |               | 11   | 21   | 8         |       |        |
+| 8  |               TABLE ACCESS FULL | SYS   | DEPARTMENTS D | 116  | 2    | 0         |       |        |
+-----------------------------------------------------------------------------------------------------------
 
-11 rows fetched.
+13 rows fetched.
 
 SQL> SELECT d.dept_name, MIN(d.dept_id) FROM employees e cross join  departments d GROUP BY d.dept_name;
 

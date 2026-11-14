@@ -49,6 +49,8 @@ typedef struct st_value_check_visit_helper {
 
 status_t og_transf_optimize_outer_join(sql_stmt_t *statement, sql_query_t *qry);
 
+status_t og_transf_cartesian_probe(sql_stmt_t *statement, sql_query_t *qry);
+
 #ifdef __cplusplus
 }
 #endif

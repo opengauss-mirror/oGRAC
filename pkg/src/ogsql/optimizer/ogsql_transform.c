@@ -228,6 +228,8 @@ status_t ogsql_apply_rule_set_2(sql_stmt_t *statement, sql_query_t *qry)
     OGSQL_RETURN_IF_APPLY_RULE_ERR(statement, qry, og_transf_cartesian_join);
     // transform sub_select by hash mtrl.
     OGSQL_RETURN_IF_APPLY_RULE_ERR(statement, qry, og_transf_var_subquery_rewrite);
+    // transform a useless cartesian table into an existence probe.
+    OGSQL_RETURN_IF_APPLY_RULE_ERR(statement, qry, og_transf_cartesian_probe);
     // transform to eliminate outer join.
     OGSQL_RETURN_IF_APPLY_RULE_ERR(statement, qry, og_transf_optimize_outer_join);
     // transform to optimize connectby.
