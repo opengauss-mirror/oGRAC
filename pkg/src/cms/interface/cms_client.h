@@ -68,6 +68,23 @@ enum cms_cli_msg_type_t {
     CMS_CLI_MSG_RES_XALARM_NOTIFY,
 };
 
+/* sysSentry / xalarm ids that notify DB and should stop UB SCN (cms_xalarm.c) */
+#ifndef CMS_XALARM_STOP_UB_EVENT_ID
+#define CMS_XALARM_STOP_UB_EVENT_ID 1003U       /* power-off / stop-ub */
+#endif
+#ifndef CMS_XALARM_PANIC_EVENT_ID
+#define CMS_XALARM_PANIC_EVENT_ID 1007U
+#endif
+#ifndef CMS_XALARM_KERNEL_REBOOT_EVENT_ID
+#define CMS_XALARM_KERNEL_REBOOT_EVENT_ID 1009U
+#endif
+
+static inline bool32 cms_xalarm_should_stop_ub_scn(uint32 alarm_id)
+{
+    return (alarm_id == CMS_XALARM_STOP_UB_EVENT_ID || alarm_id == CMS_XALARM_PANIC_EVENT_ID ||
+        alarm_id == CMS_XALARM_KERNEL_REBOOT_EVENT_ID) ? OG_TRUE : OG_FALSE;
+}
+
 typedef enum EnCmsWriteProtectAction {
     CMS_WRITE_PROTECT_ACTION_ENABLE = 1,
     CMS_WRITE_PROTECT_ACTION_DISABLE = 2,

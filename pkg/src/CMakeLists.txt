@@ -14,6 +14,9 @@ if (OS_ARCH STREQUAL "aarch64")
     if (NOT USE_H1620)
         add_compile_options(-march=armv8.2-a+crc+lse)
     endif ()
+    # SCN UB SIGBUS/ESB protection (dtc_shmem_scn_sigbus.c) is only compiled on
+    # ARM64; the define is consumed under __aarch64__ and is a no-op elsewhere.
+    add_compile_options(-DENABLE_ARM64_ESB)
 endif()
 
 include_directories(

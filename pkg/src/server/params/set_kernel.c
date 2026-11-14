@@ -2123,6 +2123,7 @@ status_t sql_notify_als_enable_ubsmem(void *se, void *item, char *value)
         g_instance->kernel.attr.enable_ubsmem = OG_FALSE;
         OG_LOG_RUN_WAR("[DRC-GBP] _ENABLE_UBSMEM ignored: UB shared memory library is not loaded");
     }
+    /* Do not clear enable_scn_ubsmem: SCN-only dedicated UB is independent of GBP. */
     return sql_notify_als_bool(se, item, value);
 }
 

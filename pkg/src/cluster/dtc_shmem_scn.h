@@ -16,7 +16,8 @@
  *
  * dtc_shmem_scn.h
  *
- * SCN slot in global remote SGA (st_remote_sga). Each slot is 64-byte aligned.
+ * SCN slot: in GBP remote SGA when _ENABLE_UBSMEM; dedicated UB shm when
+ * !_ENABLE_UBSMEM + _ENABLE_SCN_UBSMEM. Each slot is 64-byte aligned.
  *
  * IDENTIFICATION
  * src/cluster/dtc_shmem_scn.h
@@ -36,8 +37,9 @@ extern "C" {
 #ifndef SHMEM_SCN_SIZE
 #define SHMEM_SCN_SIZE (64)
 #endif
+#define SHMEM_SCN_NAME_LEN 48
 
-/* 64B slot: value + owner + pad, placed in remote SGA after node_flush_lsn. */
+/* 64B slot: value + owner + pad. */
 typedef struct st_shmem_scn_slot {
     volatile uint64 value;
     volatile uint32 owner_node;
@@ -47,13 +49,20 @@ typedef struct st_shmem_scn_slot {
 typedef struct st_shmem_scn_mgr {
     shmem_scn_slot_t *global_scn_slot; /* local node SCN slot; GET reads this only */
     uint32 owner_id;                   /* self node id after local bind */
-    char *map_addr[OG_MAX_INSTANCES];  /* per-node SCN slot addrs (inside remote SGA) */
+    char *map_addr[OG_MAX_INSTANCES];  /* per-node SCN slot / dedicated shm maps */
     bool32 map_success[OG_MAX_INSTANCES];
+    uint64 shm_size;                   /* dedicated UB region size (128M-aligned) */
+    bool32 local_created;              /* dedicated local region/shm allocated */
+    char local_region_name[SHMEM_SCN_NAME_LEN];
+    char local_shm_name[SHMEM_SCN_NAME_LEN];
 } shmem_scn_mgr_t;
 
 uint32 shmem_scn_get_owner_id(void);
 bool32 shmem_scn_is_owner(void);
+bool32 shmem_scn_use_dedicated_ub(void);
 status_t shmem_scn_init(void);
+status_t shmem_scn_prepare_persist(void);
+status_t shmem_scn_start_persist(void);
 void shmem_scn_cleanup(void);
 void shmem_scn_bind(void);
 void shmem_scn_invalidate_cache(void);
@@ -63,7 +72,20 @@ status_t shmem_scn_sync_to_ub(void);
 status_t shmem_scn_ensure_ready(void);
 bool32 shmem_scn_ready(void);
 bool32 shmem_scn_need_broadcast(void);
+bool32 shmem_scn_is_degraded(void);
 void shmem_scn_fanout_raise(uint64 scn);
+/*
+ * UB slot accessors with SIGBUS protection (aarch64+ESB). On fault: degrade +
+ * unpublish + seed raise + async peer notify (maps kept until cleanup); falls
+ * through to local SCN.
+ */
+knl_scn_t shmem_scn_ub_atomic_read(volatile uint64 *p);
+void shmem_scn_ub_atomic_raise(volatile uint64 *p, uint64 scn);
+knl_scn_t shmem_scn_ub_atomic_inc(volatile uint64 *p);
+void shmem_scn_handle_ub_fault(const char *site);
+void shmem_scn_handle_peer_fallback_notify(uint32 src_inst, uint64 seed_scn);
+/* CMS/sysSentry xalarm 1003/1007/1009: degrade UB SCN like SIGBUS if it was active. */
+void shmem_scn_handle_cms_stop_ub(uint32 alarm_id, uint32 alarm_node_id);
 /* Raise the local SCN slot to the max of mapped peer slots. Does not fan back out. */
 void shmem_scn_absorb_peers(void);
 /* Read peer node's SCN slot from remote SGA (maps if needed). 0 if unavailable. */
