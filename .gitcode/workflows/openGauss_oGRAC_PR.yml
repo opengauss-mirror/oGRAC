@@ -1,23 +1,22 @@
 name: openGauss_oGRAC_PR
 
 on:
-  push:
-    branches:
-      - '**'
   pull_request_target:
+    types:
+      - open
+      - update
+      - reopen
     branches:
+      - master
       - '**'
   pull_request_comment:
     types:
       - created
     branches:
+      - master
       - '**'
     comments:
-      - '^/retest$'
-  pr_comment:
-    types:
-      - created
-    keyword: '^/retest$'
+      - '^\s*/retest\s*$'
   workflow_dispatch:
 
 permissions:
@@ -25,101 +24,174 @@ permissions:
   pr: write
   note: write
 
+concurrency:
+  max: 100
+  exceed-action: QUEUE
+  enable: true
+  preemption:
+    enable: true
+    events: [mr_id]
+
 env:
   GITCODE_REPO: opengauss/oGRAC
-  OGRAC_REPO: https://gitcode.com/opengauss/oGRAC.git
+  GITCODE_EVENT_NAME: ${{ atomgit.event_name }}
+  GITCODE_RUN_ID: ${{ atomgit.workflow_run_id }}
+  GITCODE_ACTIONS_RUN_ID: ${{ atomgit.run_id }}
+  GITCODE_TARGET_BRANCH: ${{ atomgit.base_ref || atomgit.event.pull_request.base.ref || atomgit.event.pull_request.target_branch || atomgit.event.merge_request.target_branch }}
+  GITCODE_PR_IID: ${{ atomgit.event.pull_request.number || atomgit.event.pull_request.iid || atomgit.event.issue.number || atomgit.event.merge_request.iid || atomgit.event.merge_request.number || '' }}
 
-jobs:
-  prepare:
-    name: Mark running
-    runs-on: [self-hosted, ograc_node]
-    steps:
-      - name: Mark PR as running
-        if: ${{ atomgit.event.pull_request.number != '' }}
-        uses: cann/.gitcode/actions/pre-pipeline@master
-        with:
-          owner: opengauss
-          repo: oGRAC
-          pr_number: ${{ atomgit.event.pull_request.number }}
-          token: ${{ secrets.PR_LABEL_TOKEN }}
-          apply_label: 'true'
-          run_url: https://gitcode.com/opengauss/oGRAC/actions/runs/${{ atomgit.workflow_run_id }}
+stages:
+  create_label:
+    name: create_label
+    select: selected_by_default
+    jobs:
+      prepare:
+        name: Mark running
+        runs-on: [self-hosted, ograc_node]
+        timeout-minutes: 10
+        continue-on-error: true
+        steps:
+          - name: notify_ci_started
+            id: notify_ci_started
+            if: ${{ env.GITCODE_PR_IID != '' }}
+            uses: cann/.gitcode/actions/pre-pipeline@master
+            with:
+              owner: opengauss
+              repo: oGRAC
+              pr_number: ${{ env.GITCODE_PR_IID }}
+              token: ${{ secrets.PR_LABEL_TOKEN }}
+              apply_label: 'true'
+              run_url: https://gitcode.com/${{ env.GITCODE_REPO }}/actions/runs/${{ atomgit.workflow_run_id }}
+              actor: ${{ atomgit.actor }}
+              pr_author: ${{ atomgit.event.pull_request.user.login }}
+          - name: create_label_and_comment_fallback
+            id: state
+            if: ${{ always() && env.GITCODE_PR_IID != '' && steps.notify_ci_started.outcome != 'success' }}
+            env:
+              LABEL_JOB_TAG: prepare
+              PR_LABEL_TOKEN: ${{ secrets.PR_LABEL_TOKEN }}
+              CI_RUN_URL: https://gitcode.com/${{ env.GITCODE_REPO }}/actions/runs/${{ atomgit.workflow_run_id }}
+            run: |
+              set -eu
+              umask 077
+              src="$(mktemp -d)"
+              trap 'rm -rf "${src}"' EXIT
+              timeout 300 git clone --depth=1 --branch master "https://gitcode.com/${GITCODE_REPO}.git" "${src}"
+              label_script="${src}/.gitcode/scripts/gitcode_pr_labels.sh"
+              notify_script="${src}/.gitcode/scripts/gitcode_ci_notify.sh"
+              bash "${label_script}" delete ci-pipeline-success || true
+              bash "${label_script}" delete ci-pipeline-failed || true
+              bash "${label_script}" add ci-pipeline-running
+              if [ ! -f "${notify_script}" ]; then
+                echo "missing ${notify_script}; ensure gitcode_ci_notify.sh is on master" >&2
+                exit 1
+              fi
+              bash "${notify_script}"
 
-  compile_ograc:
-    name: openGauss_oGRAC_Compile
-    needs: prepare
-    runs-on: [self-hosted, ograc_node]
-    timeout-minutes: 120
-    steps:
-      - name: Manual checkout source code
-        run: |
-          set -e
-          workspace="$PWD"
-          repo="${ATOMGIT_REPOSITORY:-}"
-          if [ -z "${repo}" ]; then
-            repo="${GITCODE_REPOSITORY:-}"
-          fi
-          if [ -z "${repo}" ] || ! echo "${repo}" | grep -q '/'; then
-            repo="${GITCODE_REPO:-opengauss/oGRAC}"
-          fi
-          server="${ATOMGIT_SERVER_URL:-}"
-          if [ -z "${server}" ]; then
-            server="${GITCODE_SERVER_URL:-}"
-          fi
-          if [ -z "${server}" ]; then
-            server="https://gitcode.com"
-          fi
-          repo_url="${server%/}/${repo}.git"
-          ref="${ATOMGIT_REF:-}"
-          if [ -z "${ref}" ]; then
-            ref="${GITCODE_REF:-}"
-          fi
-          if [ -z "${ref}" ]; then
-            ref="refs/heads/master"
-          fi
-          sha="${ATOMGIT_SHA:-}"
-          if [ -z "${sha}" ]; then
-            sha="${GITCODE_SHA:-}"
-          fi
-          if [ -z "${sha}" ]; then
-            sha="FETCH_HEAD"
-          fi
-          echo "Manual checkout ${repo_url} ${ref} ${sha}"
+  only_doc:
+    name: only_doc
+    select: selected_by_default
+    jobs:
+      Detect_file_changes:
+        name: Detect_file_changes
+        continue-on-error: true
+        runs-on: [self-hosted, ograc_node]
+        outputs:
+          need_compile: ${{ steps.set-skip.outputs.need_compile }}
+        steps:
+          - name: set build skip flag
+            id: set-skip
+            env:
+              PR_LABEL_TOKEN: ${{ secrets.PR_LABEL_TOKEN }}
+            run: |
+              set -eu
+              umask 077
+              src="$(mktemp -d)"
+              trap 'rm -rf "${src}"' EXIT
+              timeout 300 git clone --depth=1 --branch master "https://gitcode.com/${GITCODE_REPO}.git" "${src}"
+              bash "${src}/.gitcode/scripts/detect_need_compile.sh"
 
-          mkdir -p "${workspace}"
-          cd "${workspace}"
-          if [ ! -d .git ]; then
-            git init
-          fi
-          if git remote | grep -qx origin; then
-            git remote set-url origin "${repo_url}"
-          else
-            git remote add origin "${repo_url}"
-          fi
-          git fetch --depth=1 origin "${ref}"
-          git checkout -f "${sha}" || git checkout -f FETCH_HEAD
-      - name: Run oGRAC compile on ograc_node
-        run: |
-          source .gitcode/scripts/resolve_gitcode_env.sh
-          bash .gitcode/scripts/compile_ograc.sh
-        env:
-          WORKSPACE_ROOT: /data/jenkins/workspace/oGRAC
-          GITCODE_PR_IID: ${{ atomgit.event.pull_request.number }}
+  compile:
+    name: openGauss_oGRAC
+    select: selected_by_default
+    jobs:
+      oGRAC_compile:
+        name: oGRAC_compile
+        timeout-minutes: 60
+        if: ${{ jobs.Detect_file_changes.outputs.need_compile == 'yes' }}
+        continue-on-error: true
+        runs-on: [self-hosted, ograc_node]
+        outputs:
+          result: ${{ steps.compile_ograc.outputs.result }}
+        steps:
+          - name: compile_ograc
+            id: compile_ograc
+            run: |
+              src="$(mktemp -d)"
+              trap 'rm -rf "${src}"' EXIT
+              timeout 300 git clone --depth=1 --branch master "https://gitcode.com/${GITCODE_REPO}.git" "${src}"
+              bash "${src}/.gitcode/scripts/compile_ograc.sh"
+              if [ "$?" == "0" ]; then
+                echo "result=0" >> "$ATOMGIT_OUTPUT"
+              else
+                echo "result=1" >> "$ATOMGIT_OUTPUT"
+                exit 1
+              fi
 
   report_result:
-    name: Query pipeline and label PR
-    if: ${{ always() }}
-    needs:
-      - compile_ograc
-    runs-on: [self-hosted, ograc_node]
-    steps:
-      - name: Query pipeline and update PR label
-        if: ${{ atomgit.event.pull_request.number != '' }}
-        uses: cann/.gitcode/actions/query-pipeline@master
-        with:
-          owner: opengauss
-          repo: oGRAC
-          run_id: ${{ atomgit.workflow_run_id }}
-          token: ${{ secrets.PR_LABEL_TOKEN }}
-          pr_number: ${{ atomgit.event.pull_request.number }}
-          apply_label: 'true'
+    name: Report pipeline result
+    select: selected_by_default
+    jobs: 
+      report_result:
+        name: report_result
+        runs-on: [self-hosted, ograc_node]
+        timeout-minutes: 10
+        continue-on-error: false
+        outputs:
+          labeled: ${{ steps.publish.outputs.labeled }}
+        steps:
+          - name: Show upstream status
+            run: echo "pipeline.upstream_status=${{ pipeline.upstream_status }}"
+          - name: Create label state
+            id: state
+            env:
+              LABEL_JOB_TAG: result
+              PR_LABEL_TOKEN: ${{ secrets.PR_LABEL_TOKEN }}
+              NEED_COMPILE: ${{ jobs.Detect_file_changes.outputs.need_compile }}
+              OGRAC_COMPILE: ${{ jobs.oGRAC_compile.outputs.result }}
+            run: |
+              set -eu
+              umask 077
+              echo "OGRAC_COMPILE=${OGRAC_COMPILE}"
+
+              pipeline_success=-1
+              if [ "$OGRAC_COMPILE" = 0 ]; then
+                echo "全部为 0"
+                pipeline_success=0
+              else
+                echo "有非 0"
+                pipeline_success=1
+              fi
+
+              if [ "${NEED_COMPILE}" = 'no' ]; then
+                echo "只有文档修改，跳过用例部分"
+                pipeline_success=0
+              fi
+
+              src="$(mktemp -d)"
+              trap 'rm -rf "${src}"' EXIT
+              timeout 300 git clone --depth=1 --branch master "https://gitcode.com/${GITCODE_REPO}.git" "${src}"
+              label_script="${src}/.gitcode/scripts/gitcode_pr_labels.sh"
+
+              if [ "${pipeline_success}" == 0 ]; then
+                echo "-------- 打 success 标签 --------"
+                bash "${label_script}" delete ci-pipeline-running
+                bash "${label_script}" delete ci-pipeline-failed
+                bash "${label_script}" add ci-pipeline-success
+              else
+                echo "-------- 打 failed 标签 ---------"
+                bash "${label_script}" delete ci-pipeline-running
+                bash "${label_script}" delete ci-pipeline-success
+                bash "${label_script}" add ci-pipeline-failed
+                exit 1
+              fi
