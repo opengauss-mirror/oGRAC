@@ -2318,6 +2318,15 @@ A
 
 5 rows fetched.
 
+SQL> select t.id, (select t.id + 10 from sys_dummy) as c from (select 1 id from sys_dummy union all select 2 id from sys_dummy) t order by (select t.id from sys_dummy) desc;
+
+ID           C
+------------ --------------------
+2            12
+1            11
+
+2 rows fetched.
+
 SQL> 
 SQL> select * from bison_t1 order by a desc limit 2 offset 1;
 

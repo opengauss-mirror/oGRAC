@@ -815,6 +815,7 @@ select * from bison_t1 order by a asc;
 select * from bison_t1 order by a desc;
 select * from bison_t1 order by a nulls first;
 select * from bison_t1 order by a nulls last;
+select t.id, (select t.id + 10 from sys_dummy) as c from (select 1 id from sys_dummy union all select 2 id from sys_dummy) t order by (select t.id from sys_dummy) desc;
 
 select * from bison_t1 order by a desc limit 2 offset 1;
 select * from bison_t1 order by a desc offset 2 limit 1;
