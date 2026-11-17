@@ -217,6 +217,34 @@ SQL> grant all on bison_dcl_issue270_basic to bison_dcl_issue270_role;
 
 Succeed.
 
+SQL> revoke all privileges on bison_dcl_issue270_basic from bison_dcl_issue270_role;
+
+Succeed.
+
+SQL> grant all on bison_dcl_issue270_basic to bison_dcl_issue270_role;
+
+Succeed.
+
+SQL> revoke all on bison_dcl_issue270_basic from bison_dcl_issue270_role;
+
+Succeed.
+
+SQL> grant all on bison_dcl_issue270_basic to bison_dcl_issue270_role;
+
+Succeed.
+
+SQL> revoke all on table bison_dcl_issue270_basic from bison_dcl_issue270_role;
+
+Succeed.
+
+SQL> grant all on bison_dcl_issue270_basic to bison_dcl_issue270_role;
+
+Succeed.
+
+SQL> revoke all privileges on table bison_dcl_issue270_basic from bison_dcl_issue270_role;
+
+Succeed.
+
 SQL> drop table bison_dcl_issue270_basic;
 
 Succeed.

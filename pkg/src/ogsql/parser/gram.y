@@ -12117,11 +12117,55 @@ RevokeStmt:
                     }
                     $$ = def;
                 }
+            | REVOKE ALL ON grant_objtype any_name FROM revokee_list opt_revoke_cascade
+                {
+                    knl_revoke_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_revoke(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, $4, $5, $7, $8) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse revoke failed");
+                    }
+                    $$ = def;
+                }
+            | REVOKE ALL PRIVILEGES ON grant_objtype any_name FROM revokee_list opt_revoke_cascade
+                {
+                    knl_revoke_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL PRIVILEGES", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_revoke(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, $5, $6, $8, $9) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse revoke failed");
+                    }
+                    $$ = def;
+                }
             | REVOKE obj_priv_list ON any_name FROM revokee_list opt_revoke_cascade
                 {
                     knl_revoke_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     if (og_parse_revoke(stmt, &def, PRIV_TYPE_OBJ_PRIV, $2, OBJ_TYPE_INVALID, $4, $6, $7) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse revoke failed");
+                    }
+                    $$ = def;
+                }
+            | REVOKE ALL ON any_name FROM revokee_list opt_revoke_cascade
+                {
+                    knl_revoke_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_revoke(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, OBJ_TYPE_INVALID, $4, $6, $7) != OG_SUCCESS) {
+                        parser_abort_or_yyerror("parse revoke failed");
+                    }
+                    $$ = def;
+                }
+            | REVOKE ALL PRIVILEGES ON any_name FROM revokee_list opt_revoke_cascade
+                {
+                    knl_revoke_def_t *def = NULL;
+                    sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                    galist_t *list = NULL;
+                    if (sql_bison_make_all_priv_list(stmt, "ALL PRIVILEGES", @2.loc, &list) != OG_SUCCESS ||
+                        og_parse_revoke(stmt, &def, PRIV_TYPE_OBJ_PRIV, list, OBJ_TYPE_INVALID, $5, $7, $8) != OG_SUCCESS) {
                         parser_abort_or_yyerror("parse revoke failed");
                     }
                     $$ = def;
