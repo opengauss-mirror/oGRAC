@@ -3477,6 +3477,14 @@ cond_node:
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_VARIANT);
                 $$ = node;
             }
+            | parenthesized_oper_expr BETWEEN expr_with_select AND expr_with_select
+            {
+                $3->next = $5;
+                $$ = bison_make_compare_cond(yyscanner, $1, $3, CMP_TYPE_BETWEEN, @2.loc);
+                if ($$ == NULL) {
+                    parser_abort_or_yyerror("init between cond failed");
+                }
+            }
             | expr_with_select NOT BETWEEN expr_with_select AND expr_with_select
             {
                 cond_node_t *node = NULL;
@@ -3495,6 +3503,14 @@ cond_node:
                 fix_type_for_select_node(node->cmp->left, SELECT_AS_VARIANT);
                 fix_type_for_select_node(node->cmp->right, SELECT_AS_VARIANT);
                 $$ = node;
+            }
+            | parenthesized_oper_expr NOT BETWEEN expr_with_select AND expr_with_select
+            {
+                $4->next = $6;
+                $$ = bison_make_compare_cond(yyscanner, $1, $4, CMP_TYPE_NOT_BETWEEN, @3.loc);
+                if ($$ == NULL) {
+                    parser_abort_or_yyerror("init not between cond failed");
+                }
             }
             | EXISTS select_with_parens
             {

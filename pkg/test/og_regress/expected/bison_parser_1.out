@@ -736,6 +736,14 @@ SQL> delete from bison_t1 where a not between 'ab' and 'ac';
 
 0 rows affected.
 
+SQL> select count(*) as matched from sys_dummy where (4-1)/2-2 between -1 and 0 and (1) not between 2 and 3;
+
+MATCHED
+--------------------
+1
+
+1 rows fetched.
+
 SQL> 
 SQL> alter system set _OPTIM_SUBQUERY_REWRITE=false;
 

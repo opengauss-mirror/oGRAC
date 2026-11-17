@@ -223,6 +223,7 @@ delete from bison_t1 where a not regexp 'abc';
 
 delete from bison_t1 where a between 'ab' and 'ac';
 delete from bison_t1 where a not between 'ab' and 'ac';
+select count(*) as matched from sys_dummy where (4-1)/2-2 between -1 and 0 and (1) not between 2 and 3;
 
 alter system set _OPTIM_SUBQUERY_REWRITE=false;
 delete from bison_t1 where exists (select 'ab');
