@@ -17497,6 +17497,7 @@ snapshot_alias_keyword:
             | CURRENT_P
             | CURRENT_DATE
             | CURRENT_TIMESTAMP
+            | CURRENT_USER
             | CURSOR
             | CURSOR_NAME
             | CYCLE
@@ -18166,7 +18167,6 @@ reserved_keyword:
             | CURRENT_CATALOG
             | CURRENT_ROLE
             | CURRENT_TIME
-            | CURRENT_USER
             | DB_P
             | DEFAULT
             | DEFERRABLE
