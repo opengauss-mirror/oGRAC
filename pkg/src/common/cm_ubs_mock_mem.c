@@ -174,6 +174,16 @@ SHMEM_API int ubsmem_shmem_allocate(
 }
 
 /* -------------------------------------------------
+ * Allocate with provider (mock: ignore provider, reuse allocate)
+ * ------------------------------------------------- */
+SHMEM_API int ubsmem_shmem_allocate_with_provider(const ubs_mem_provider_t *provider, const char *name, size_t size,
+    mode_t mode, uint64_t flags)
+{
+    (void)provider;
+    return ubsmem_shmem_allocate("shm_pool_0", name, size, mode, flags);
+}
+
+/* -------------------------------------------------
  * Deallocate (remove file)
  * ------------------------------------------------- */
 SHMEM_API int ubsmem_shmem_deallocate(const char *name)

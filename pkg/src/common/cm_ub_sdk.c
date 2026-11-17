@@ -37,6 +37,8 @@ typedef int (*ubsmem_lookup_region_f)(const char *region_name, ubsmem_region_des
 typedef int (*ubsmem_destroy_region_f)(const char *region_name);
 typedef int (*ubsmem_shmem_allocate_f)(const char *region_name, const char *name, size_t size, mode_t mode,
     uint64_t flags);
+typedef int (*ubsmem_shmem_allocate_with_provider_f)(const ubs_mem_provider_t *provider, const char *name, size_t size,
+    mode_t mode, uint64_t flags);
 typedef int (*ubsmem_shmem_deallocate_f)(const char *name);
 typedef int (*ubsmem_shmem_map_f)(void *addr, size_t length, int prot, int flags, const char *name, off_t offset,
     void **local_ptr);
@@ -66,6 +68,7 @@ typedef struct st_ub_sdk_api {
     ubsmem_lookup_region_f lookup_region;
     ubsmem_destroy_region_f destroy_region;
     ubsmem_shmem_allocate_f shmem_allocate;
+    ubsmem_shmem_allocate_with_provider_f shmem_allocate_with_provider;
     ubsmem_shmem_deallocate_f shmem_deallocate;
     ubsmem_shmem_map_f shmem_map;
     ubsmem_shmem_unmap_f shmem_unmap;
@@ -141,6 +144,8 @@ status_t cm_ub_sdk_load(void)
         { "ubsmem_lookup_region", (void **)&g_ub_sdk.lookup_region },
         { "ubsmem_destroy_region", (void **)&g_ub_sdk.destroy_region },
         { "ubsmem_shmem_allocate", (void **)&g_ub_sdk.shmem_allocate },
+        /* optional: older SDK builds may lack provider allocate */
+        { "ubsmem_shmem_allocate_with_provider", (void **)&g_ub_sdk.shmem_allocate_with_provider, OG_TRUE },
         { "ubsmem_shmem_deallocate", (void **)&g_ub_sdk.shmem_deallocate },
         { "ubsmem_shmem_map", (void **)&g_ub_sdk.shmem_map },
         { "ubsmem_shmem_unmap", (void **)&g_ub_sdk.shmem_unmap },
@@ -232,6 +237,12 @@ int ubsmem_destroy_region(const char *region_name)
 int ubsmem_shmem_allocate(const char *region_name, const char *name, size_t size, mode_t mode, uint64_t flags)
 {
     return UB_SDK_CALL(shmem_allocate, region_name, name, size, mode, flags);
+}
+
+int ubsmem_shmem_allocate_with_provider(const ubs_mem_provider_t *provider, const char *name, size_t size, mode_t mode,
+    uint64_t flags)
+{
+    return UB_SDK_CALL_OPTIONAL(shmem_allocate_with_provider, provider, name, size, mode, flags);
 }
 
 int ubsmem_shmem_deallocate(const char *name)

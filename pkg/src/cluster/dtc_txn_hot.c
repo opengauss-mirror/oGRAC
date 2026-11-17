@@ -92,12 +92,84 @@ static inline dtc_txn_hot_hdr_t *hot_hdr(remote_sga_t *sga, uint32 inst)
     return (dtc_txn_hot_hdr_t *)(sga->remote_buf_addr[inst] + sga->txn_hot_offset);
 }
 
-static inline dtc_txn_hot_t *hot_slot(remote_sga_t *sga, uint32 inst, uint32 index)
+/*
+ * Layout validated once per owner. Hit path compares the local mapping only
+ * and does not load the remote header.
+ * base is published last; readers copy then recheck base.
+ */
+typedef struct st_hot_layout {
+    char *base;
+    uint64 offset;
+    uint32 undo_segments;
+    uint32 capacity_per_seg;
+    uint32 txn_cap;
+    uint32 header_size;
+} hot_layout_t;
+
+static hot_layout_t g_hot_layout[OG_MAX_INSTANCES];
+
+static void hot_layout_clear(uint32 inst)
 {
-    dtc_txn_hot_hdr_t *h = hot_hdr(sga, inst);
-    if (h == NULL || index >= h->txn_cap_per_inst) return NULL;
-    char *base = sga->remote_buf_addr[inst] + sga->txn_hot_offset + h->header_size;
-    return (dtc_txn_hot_t *)base + index;
+    if (inst >= OG_MAX_INSTANCES) {
+        return;
+    }
+    g_hot_layout[inst].base = NULL;
+    CM_MFENCE;
+}
+
+static void hot_layout_store(uint32 inst, char *base, uint64 offset, uint32 segs, uint32 cap, uint32 txn_cap,
+    uint32 header_size)
+{
+    hot_layout_t *view;
+
+    if (inst >= OG_MAX_INSTANCES || base == NULL || offset == 0) {
+        return;
+    }
+    view = &g_hot_layout[inst];
+    view->base = NULL;
+    CM_MFENCE;
+    view->offset = offset;
+    view->undo_segments = segs;
+    view->capacity_per_seg = cap;
+    view->txn_cap = txn_cap;
+    view->header_size = header_size;
+    CM_MFENCE;
+    view->base = base;
+}
+
+static bool32 hot_layout_hit(remote_sga_t *sga, uint32 inst, hot_layout_t *out)
+{
+    hot_layout_t *view;
+    hot_layout_t snap;
+    char *base;
+    uint64 offset;
+
+    if (inst >= OG_MAX_INSTANCES || sga->txn_hot_offset == 0 || sga->remote_buf_addr[inst] == NULL) {
+        return OG_FALSE;
+    }
+    base = sga->remote_buf_addr[inst];
+    offset = sga->txn_hot_offset;
+    view = &g_hot_layout[inst];
+    if (view->base != base) {
+        return OG_FALSE;
+    }
+    CM_MFENCE;
+    snap = *view;
+    CM_MFENCE;
+    if (snap.base != base || snap.offset != offset || snap.header_size != sizeof(dtc_txn_hot_hdr_t) ||
+        snap.txn_cap == 0 || snap.capacity_per_seg == 0) {
+        return OG_FALSE;
+    }
+    *out = snap;
+    return OG_TRUE;
+}
+
+static inline dtc_txn_hot_t *hot_slot_from_layout(const hot_layout_t *lay, uint32 index)
+{
+    if (index >= lay->txn_cap) {
+        return NULL;
+    }
+    return (dtc_txn_hot_t *)(lay->base + lay->offset + lay->header_size) + index;
 }
 
 static inline uint64 hot_layout_fingerprint(uint64 offset, uint64 size, uint32 segs, uint32 cap, uint32 page_size)
@@ -127,6 +199,24 @@ static bool32 hot_header_valid(knl_session_t *session, remote_sga_t *sga, dtc_tx
         h->region_size == size && sga->txn_hot_offset == offset && sga->txn_hot_region_size == size &&
         h->layout_fingerprint == hot_layout_fingerprint(offset, size, segs, cap,
             session->kernel->attr.page_size);
+}
+
+/* Miss path reads and checks the remote header once, then publishes the local view. */
+static bool32 hot_layout_resolve(knl_session_t *session, remote_sga_t *sga, uint32 inst, hot_layout_t *out)
+{
+    dtc_txn_hot_hdr_t *h;
+
+    if (hot_layout_hit(sga, inst, out)) {
+        return OG_TRUE;
+    }
+    h = hot_hdr(sga, inst);
+    if (!hot_header_valid(session, sga, h)) {
+        hot_layout_clear(inst);
+        return OG_FALSE;
+    }
+    hot_layout_store(inst, sga->remote_buf_addr[inst], sga->txn_hot_offset, h->undo_segments, h->capacity_per_seg,
+        h->txn_cap_per_inst, h->header_size);
+    return hot_layout_hit(sga, inst, out);
 }
 
 bool32 dtc_txn_hot_enabled(knl_session_t *session)
@@ -197,7 +287,7 @@ static void hot_publish_locked(dtc_txn_hot_t *slot, txn_t *txn, tx_item_t *item,
 void dtc_txn_hot_publish_item_locked(knl_session_t *session, tx_item_t *item, txn_t *txn, uint64 end_lsn)
 {
     remote_sga_t *sga;
-    dtc_txn_hot_hdr_t *h;
+    hot_layout_t lay;
     undo_set_t *set;
     undo_t *undo;
     tx_id_t id;
@@ -207,28 +297,26 @@ void dtc_txn_hot_publish_item_locked(knl_session_t *session, tx_item_t *item, tx
         return;
     }
     sga = &DRC_RES_CTX->remote_sga;
-    h = hot_hdr(sga, session->kernel->id);
-    if (!hot_header_valid(session, sga, h)) {
-        OG_LOG_RUN_ERR("[TXN_HOT] publish skipped: invalid header, inst_id=%u, header=%p",
-            session->kernel->id, (void *)h);
+    if (!hot_layout_resolve(session, sga, session->kernel->id, &lay)) {
+        OG_LOG_RUN_ERR("[TXN_HOT] publish skipped: invalid header, inst_id=%u", session->kernel->id);
         return;
     }
     set = UNDO_SET(session, session->kernel->id);
     id = tx_xmap_get_txid(session, item->xmap);
-    if (id.seg_id >= h->undo_segments) {
+    if (id.seg_id >= lay.undo_segments) {
         OG_LOG_RUN_ERR("[TXN_HOT] publish skipped: invalid seg_id=%u, undo_segments=%u",
-            id.seg_id, h->undo_segments);
+            id.seg_id, lay.undo_segments);
         return;
     }
     undo = &set->undos[id.seg_id];
-    if (undo->capacity != h->capacity_per_seg || id.item_id >= h->capacity_per_seg) {
+    if (undo->capacity != lay.capacity_per_seg || id.item_id >= lay.capacity_per_seg) {
         OG_LOG_RUN_ERR("[TXN_HOT] publish skipped: capacity mismatch or invalid item_id, seg_id=%u, "
             "item_id=%u, undo_capacity=%u, hot_capacity=%u",
-            id.seg_id, id.item_id, undo->capacity, h->capacity_per_seg);
+            id.seg_id, id.item_id, undo->capacity, lay.capacity_per_seg);
         return;
     }
-    index = id.seg_id * h->capacity_per_seg + id.item_id;
-    dtc_txn_hot_t *slot = hot_slot(sga, session->kernel->id, index);
+    index = id.seg_id * lay.capacity_per_seg + id.item_id;
+    dtc_txn_hot_t *slot = hot_slot_from_layout(&lay, index);
     if (slot == NULL) return;
     hot_publish_locked(slot, txn, item, end_lsn);
 }
@@ -273,7 +361,13 @@ uint64 dtc_txn_hot_pool_layout_end(const remote_sga_t *sga, uint32 undo_segments
 void dtc_txn_hot_rebuild(knl_session_t *session, undo_set_t *set, uint32 lseg_no, uint32 rseg_no)
 {
     uint32 seg, id;
+    remote_sga_t *sga;
+    hot_layout_t lay;
     if (!dtc_txn_hot_enabled(session) || set == NULL || set->inst_id != session->kernel->id) {
+        return;
+    }
+    sga = &DRC_RES_CTX->remote_sga;
+    if (!hot_layout_resolve(session, sga, session->kernel->id, &lay)) {
         return;
     }
     for (seg = lseg_no; seg < rseg_no; seg++) {
@@ -282,7 +376,7 @@ void dtc_txn_hot_rebuild(knl_session_t *session, undo_set_t *set, uint32 lseg_no
             dtc_txn_hot_t *slot;
             txn_t *txn = txn_addr(session, undo->items[id].xmap);
 
-            slot = hot_slot(&DRC_RES_CTX->remote_sga, session->kernel->id, seg * undo->capacity + id);
+            slot = hot_slot_from_layout(&lay, seg * undo->capacity + id);
             if (slot != NULL) {
                 hot_publish_locked(slot, txn, &undo->items[id], 0);
             }
@@ -388,7 +482,8 @@ status_t dtc_txn_hot_region_init(remote_sga_t *sga)
     uint64 size = hot_region_size_bytes(segs, g_instance->kernel.attr.tran_buf_size);
     dtc_txn_hot_hdr_t *h;
     if (sga == NULL || sga->remote_buf_addr[self] == NULL || segs == 0 || cap == 0 || cap * segs != total_cap) return OG_ERROR;
-    sga->txn_hot_offset = CM_CALC_ALIGN(drc_get_shmem_scn_offset(sga) + drc_get_gbp_shmem_scn_size(), 64);
+    hot_layout_clear(self);
+    sga->txn_hot_offset = CM_CALC_ALIGN(drc_get_shmem_scn_offset(sga) + DRC_SHMEM_SCN_SIZE, 64);
     if (sga->txn_hot_offset + size > sga->remote_total_pool_size) return OG_ERROR;
     h = hot_hdr(sga, self);
     knl_reset_large_memory((char *)h, size);
@@ -398,6 +493,8 @@ status_t dtc_txn_hot_region_init(remote_sga_t *sga)
     h->page_size = g_instance->kernel.attr.page_size; h->txn_hot_offset = sga->txn_hot_offset; h->region_size = size;
     h->layout_fingerprint = hot_layout_fingerprint(sga->txn_hot_offset, size, segs, cap, h->page_size);
     sga->txn_hot_region_size = size;
+    hot_layout_store(self, sga->remote_buf_addr[self], sga->txn_hot_offset, segs, cap, cap * segs,
+        sizeof(dtc_txn_hot_hdr_t));
     sga->remote_pool_reserve_offset = sga->txn_hot_offset + size;
     (void)shmem_scn_rebind_if_needed();
     return OG_SUCCESS;
@@ -434,7 +531,7 @@ static status_t hot_get_info_from_snapshot(knl_session_t *session, bool32 is_sca
 static status_t hot_fetch_by_xmap(knl_session_t *session, xmap_t xmap, uint8 owner, txn_hot_read_t *out)
 {
     remote_sga_t *sga = &DRC_RES_CTX->remote_sga;
-    dtc_txn_hot_hdr_t *h;
+    hot_layout_t lay;
     dtc_txn_hot_t *slot;
     tx_id_t id = tx_xmap_get_txid(session, xmap);
 
@@ -445,12 +542,11 @@ static status_t hot_fetch_by_xmap(knl_session_t *session, xmap_t xmap, uint8 own
     if (!sga->map_success[owner] && dtc_mmap_remote_data_buf(sga, owner) != OG_SUCCESS) {
         return OG_ERROR;
     }
-    h = hot_hdr(sga, owner);
-    if (!hot_header_valid(session, sga, h) || id.seg_id >= h->undo_segments ||
-        id.item_id >= h->capacity_per_seg) {
+    if (!hot_layout_resolve(session, sga, owner, &lay) || id.seg_id >= lay.undo_segments ||
+        id.item_id >= lay.capacity_per_seg) {
         return OG_ERROR;
     }
-    slot = hot_slot(sga, owner, id.seg_id * h->capacity_per_seg + id.item_id);
+    slot = hot_slot_from_layout(&lay, id.seg_id * lay.capacity_per_seg + id.item_id);
     if (slot == NULL || hot_read(slot, out) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -503,7 +599,7 @@ status_t dtc_get_txn_info_from_hot(knl_session_t *session, bool32 is_scan, xid_t
 static dtc_txn_hot_t *hot_slot_by_xid(knl_session_t *session, xid_t xid, uint8 owner)
 {
     remote_sga_t *sga = &DRC_RES_CTX->remote_sga;
-    dtc_txn_hot_hdr_t *h;
+    hot_layout_t lay;
     tx_id_t id;
 
     if (!dtc_txn_hot_enabled(session) || owner >= OG_MAX_INSTANCES) {
@@ -513,13 +609,12 @@ static dtc_txn_hot_t *hot_slot_by_xid(knl_session_t *session, xid_t xid, uint8 o
     if (!sga->map_success[owner] && dtc_mmap_remote_data_buf(sga, owner) != OG_SUCCESS) {
         return NULL;
     }
-    h = hot_hdr(sga, owner);
     id = tx_xmap_get_txid(session, xid.xmap);
-    if (!hot_header_valid(session, sga, h) || id.seg_id >= h->undo_segments ||
-        id.item_id >= h->capacity_per_seg) {
+    if (!hot_layout_resolve(session, sga, owner, &lay) || id.seg_id >= lay.undo_segments ||
+        id.item_id >= lay.capacity_per_seg) {
         return NULL;
     }
-    return hot_slot(sga, owner, id.seg_id * h->capacity_per_seg + id.item_id);
+    return hot_slot_from_layout(&lay, id.seg_id * lay.capacity_per_seg + id.item_id);
 }
 
 static bool32 hot_try_observe_end(knl_session_t *session, xid_t xid, uint8 owner, bool32 count_info_hot)
