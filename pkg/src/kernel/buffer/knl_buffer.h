@@ -48,6 +48,8 @@ extern "C" {
 #define ENTER_PAGE_HIGH_AGE       (uint8)0x20  // decrease possibility to be recycled of page
 #define ENTER_PAGE_TRY_PREFETCH (uint8)0x40    // try to prefetch for heap noread
 #define ENTER_PAGE_FROM_REMOTE (uint8)0x80     // remote access mode
+/* GBP migrate: one bounded recycle attempt; return NULL instead of spinning (uint32 options). */
+#define ENTER_PAGE_GBP_TRY        (uint32)0x100
 
 #define RD_ENTER_PAGE_MASK        (~(ENTER_PAGE_PINNED | ENTER_PAGE_NO_READ | ENTER_PAGE_TRY | ENTER_PAGE_RESIDENT))
 #define BUF_IS_RESIDENT(ctrl)     ((ctrl)->is_resident)
@@ -226,6 +228,8 @@ typedef struct __attribute__((aligned(128))) st_buf_ctrl
     remote_page_info_t *shmem_page_meta;  // points to the metadata of a compound page in shared memory
     page_head_t *shmem_page_addr;
     bool32 is_in_gbp;
+    uint32 gbp_slot_generation; /* generation this ctrl was bound to; 0 means unbound */
+    uint64 disk_expect_lsn;     /* lower bound left by eviction; 0 means no bound */
 
     struct st_buf_ctrl *ckpt_prev;
     struct st_buf_ctrl *ckpt_next;
@@ -421,7 +425,7 @@ buf_ctrl_t *buf_alloc_compress(knl_session_t *session, page_id_t wanted_page, la
 buf_ctrl_t *buf_try_alloc_compress(knl_session_t *session, page_id_t wanted_page, latch_mode_t mode, uint32 options,
                                    buf_add_pos_t add_pos);
 /** Evict a page from shmem: invalidate metadata, remove from hash, and demote in LRU. */
-status_t buf_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta,
+status_t buf_gbp_shmem_evict(knl_session_t *session, buf_ctrl_t *shmem_ctrl, remote_page_info_t *out_shmem_page_meta,
                          bool32 list_locked);
 void buf_lru_add_ctrl(buf_lru_list_t *list, buf_ctrl_t *ctrl, buf_add_pos_t pos);
 void buf_stash_marked_page(buf_set_t *set, buf_lru_list_t *list, buf_ctrl_t *ctrl);

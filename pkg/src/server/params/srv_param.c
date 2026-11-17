@@ -206,6 +206,12 @@ config_item_t g_parameters[] = {
     { "_UB_PAGE_HOT_TIMEOUT", OG_TRUE, ATTR_NONE, "2", NULL, NULL, "-", "[1,1000]", "OG_TYPE_INTEGER", NULL,
       PARAM__UB_PAGE_HOT_TIMEOUT, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_ub_page_hot_timeout,
       sql_notify_als_ub_page_hot_timeout, NULL, NULL },
+    { "_GBP_RECYCLE_SCAN_BUDGET", OG_TRUE, ATTR_NONE, "128", NULL, NULL, "-", "[1,100000]", "OG_TYPE_INTEGER", NULL,
+      PARAM__GBP_RECYCLE_SCAN_BUDGET, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_gbp_recycle_scan_budget,
+      sql_notify_als_gbp_recycle_scan_budget, NULL, NULL },
+    { "_GBP_RECYCLE_NEED_CKPT_EARLY", OG_TRUE, ATTR_NONE, "16", NULL, NULL, "-", "[1,100000]", "OG_TYPE_INTEGER", NULL,
+      PARAM__GBP_RECYCLE_NEED_CKPT_EARLY, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_gbp_recycle_need_ckpt_early,
+      sql_notify_als_gbp_recycle_need_ckpt_early, NULL, NULL },
     { "UBS_CLUSTER_HOSTS", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL,
       PARAM_UBS_CLUSTER_HOSTS, EFFECT_REBOOT, CFG_INS, NULL, NULL, NULL, NULL },
     /* *************************************************************************

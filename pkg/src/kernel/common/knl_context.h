@@ -259,6 +259,9 @@ typedef struct st_knl_attr {
     bool32 enable_ubsmem;
     uint32 ub_page_hot_threshold;
     uint32 ub_page_hot_timeout;
+    /* GBP recycle: max LRU nodes scanned per attempt; need_ckpt hits before early ckpt (EFFECT_IMMEDIATELY). */
+    uint32 gbp_recycle_scan_budget;
+    uint32 gbp_recycle_need_ckpt_early;
     char ubs_cluster_hosts[OG_HOST_NAME_BUFFER_SIZE * 16];
     bool32 enable_abr;
     uint32 abr_timeout;

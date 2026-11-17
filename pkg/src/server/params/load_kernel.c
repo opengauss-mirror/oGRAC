@@ -1678,6 +1678,21 @@ status_t srv_load_kernel_params(void)
     }
     OG_RETURN_IFERR(srv_get_param_uint32("_UB_PAGE_HOT_TIMEOUT", &attr->ub_page_hot_timeout));
 
+    OG_RETURN_IFERR(srv_get_param_uint32("_GBP_RECYCLE_SCAN_BUDGET", &attr->gbp_recycle_scan_budget));
+    if (attr->gbp_recycle_scan_budget < OG_MIN_GBP_RECYCLE_SCAN_BUDGET ||
+        attr->gbp_recycle_scan_budget > OG_MAX_GBP_RECYCLE_SCAN_BUDGET) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_GBP_RECYCLE_SCAN_BUDGET", OG_MIN_GBP_RECYCLE_SCAN_BUDGET,
+            OG_MAX_GBP_RECYCLE_SCAN_BUDGET);
+        return OG_ERROR;
+    }
+    OG_RETURN_IFERR(srv_get_param_uint32("_GBP_RECYCLE_NEED_CKPT_EARLY", &attr->gbp_recycle_need_ckpt_early));
+    if (attr->gbp_recycle_need_ckpt_early < OG_MIN_GBP_RECYCLE_NEED_CKPT_EARLY ||
+        attr->gbp_recycle_need_ckpt_early > OG_MAX_GBP_RECYCLE_NEED_CKPT_EARLY) {
+        OG_THROW_ERROR(ERR_PARAMETER_OVER_RANGE, "_GBP_RECYCLE_NEED_CKPT_EARLY", OG_MIN_GBP_RECYCLE_NEED_CKPT_EARLY,
+            OG_MAX_GBP_RECYCLE_NEED_CKPT_EARLY);
+        return OG_ERROR;
+    }
+
     {
         char *ubs_hosts = srv_get_param("UBS_CLUSTER_HOSTS");
         uint32 ubs_hosts_len = (uint32)strlen(ubs_hosts);

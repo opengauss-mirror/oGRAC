@@ -203,6 +203,8 @@ typedef struct st_drc_edp_info {
     uint64 lsn;
     uint64 readonly_copies;
     uint8 latest_edp;
+    bool8 is_in_gbp; /* page_hot_stat.is_in_gbp; for meta==NULL ckpt guard */
+    uint8 unused[2];
 } drc_edp_info_t;
 
 typedef enum en_drc_res_type {
@@ -435,7 +437,8 @@ typedef struct st_claim_info {
     // uint64_t shmem_page_meta; // points to the metadata of hot page in shared memory. Used when we move page from lbp
     // -> gbp
     uint8 gbp_owner_id;
-    uint8 reserved_gbp[7];
+    uint8 gbp_pad[3];
+    uint32 gbp_slot_generation;
     uint64 shmem_page_meta_off;
 } claim_info_t;
 
@@ -503,6 +506,7 @@ typedef struct st_drc_req_owner_result {
     drc_page_gdp_move_action_type gbp_action;
     buf_ctrl_t *gbp_buf_ctrl;      // new field for GBP context
     page_head_t *shmem_page_addr;  // new field for GBP context, only used when gbp_action is not DRC_NEED_NO_MOVE
+    uint64 evict_flush_lsn;        /* post-eviction durable head_lsn; 0 = normal grant */
 } drc_req_owner_result_t;
 
 typedef struct st_drc_remaster_task_msg {
@@ -686,9 +690,17 @@ EXTER_ATTACK status_t drc_request_page_owner(knl_session_t *session, page_id_t p
 EXTER_ATTACK void drc_claim_page_owner(knl_session_t *session, claim_info_t *claim_info, cvt_info_t *cvt_info,
                                        uint64 req_version);
 EXTER_ATTACK void drc_claim_page_to_hot(knl_session_t *session, claim_info_t *claim_info, uint64 req_version);
+/* Promotion cancel: claim a fully written image, otherwise retire the reservation. */
+void drc_finish_or_retire_gbp_slot(knl_session_t *session, buf_ctrl_t *ctrl);
 status_t drc_release_page_owner(uint8 old_id, page_id_t pagid, bool32 *released);
 EXTER_ATTACK void drc_process_send_page_info(void *sess, mes_message_t *msg);
 drc_buf_res_t *drc_get_buf_res_by_pageid(knl_session_t *session, page_id_t pagid);
+/* Read buf_res->lsn under bucket lock; 0 if no buf_res. Used as write-disk lower bound. */
+uint64 drc_gbp_get_buf_res_lsn(page_id_t pagid);
+/* Raise buf_res->lsn to at least lsn (no-op if no buf_res or already higher). Disk-proven floors only. */
+void drc_gbp_raise_buf_res_lsn(page_id_t pagid, uint64 lsn);
+/* One lookup: barrier lsn + is_in_gbp (both 0/false if no buf_res). */
+void drc_gbp_get_page_ckpt_guard(page_id_t pagid, uint64 *barrier_lsn, bool32 *is_in_gbp);
 status_t drc_process_buf_master_blk(mes_message_t *msg);
 status_t drc_process_lock_master_blk(uint32 id, mes_message_t *msg);
 void drc_update_remaster_local_status(drc_remaster_status_e status);
@@ -824,8 +836,8 @@ void drc_set_deposit_id(uint8 inst_id, uint8 deposit_id);
 void drc_invalidate_datafile_buf_res(knl_session_t *session, uint32 file_id);
 
 /** invalidates a shmem page. */
-status_t drc_invalidate_shmem_page(knl_session_t *session, page_id_t pagid);
-status_t drc_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl, bool32 list_locked);
+status_t drc_gbp_invalidate_shmem_page(knl_session_t *session, page_id_t pagid);
+status_t drc_gbp_invalidate_shmem_page_by_ctrl(knl_session_t *session, buf_ctrl_t *shmem_ctrl, bool32 list_locked);
 #ifdef __cplusplus
 }
 #endif

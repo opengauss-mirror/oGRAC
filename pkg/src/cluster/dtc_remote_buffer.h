@@ -82,6 +82,8 @@ typedef struct st_remote_sga {
     char *shmem_scn; /* local node SCN slot (64B aligned) inside remote SGA */
     uint64 txn_hot_offset;
     uint64 txn_hot_region_size;
+    /* OG_TRUE after region+data both newly created and pool zeroed; any leftover fails startup. */
+    bool32 data_buf_fresh;
 } remote_sga_t;
 
 static inline uint64 drc_get_dist_que_offset(const remote_sga_t *remote_sga)
@@ -128,11 +130,16 @@ typedef struct st_remote_page_info {
     uint16 ref_num;
     uint16 xlog_owner_node;  // last repair node
     uint8 xlog_owner_node_timeline_id[6];
-    uint8 reserved[5];
+    uint8 is_hot;
+    uint32 generation; /* published occupancy; 0 is never a generation */
     uint64 ckpt_flush_state;
 } remote_page_info_t;
 
 #pragma pack(pop)
+
+typedef char gbp_meta_layout_check[(sizeof(remote_page_info_t) == 48 &&
+    offsetof(remote_page_info_t, generation) == 36 &&
+    offsetof(remote_page_info_t, ckpt_flush_state) == 40) ? 1 : -1];
 
 #define GBP_CKPT_MARK_MASK (1ULL << 63)
 #define GBP_CKPT_LSN_MASK  (~GBP_CKPT_MARK_MASK)
@@ -189,6 +196,58 @@ typedef enum buffer_type {
 static inline uint64 *gbp_tail_ptr_from_page(const void *page, uint32 page_size)
 {
     return (uint64 *)((char *)page + page_size);
+}
+
+static inline bool32 gbp_slot_page_is_invalid(const remote_page_info_t *meta)
+{
+    return (bool32)(meta->file_id == OG_INVALID_ID16 || meta->page_id == OG_INVALID_ID32);
+}
+
+/* A live page has a published generation and a real file/page. File 0 page 0 is live when generation is not 0. */
+static inline bool32 gbp_slot_names_live_page(const remote_page_info_t *meta)
+{
+    if (meta == NULL || meta->generation == 0 || gbp_slot_page_is_invalid(meta)) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
+}
+
+/* Image is durable when head equals tail, the ckpt mark is clear, and the cursor has reached head. */
+static inline bool32 gbp_slot_image_flushed(remote_page_info_t *meta, const void *page, uint32 page_size)
+{
+    uint64 head;
+    uint64 tail;
+    uint64 state;
+
+    if (meta == NULL || page == NULL || meta->generation == UINT32_MAX) {
+        return OG_FALSE;
+    }
+    head = meta->head_lsn;
+    tail = *gbp_tail_ptr_from_page(page, page_size);
+    state = gbp_ckpt_get_state(meta);
+    if (gbp_ckpt_state_is_marked(state) || head == 0 || head != tail) {
+        return OG_FALSE;
+    }
+    return (bool32)(gbp_ckpt_state_lsn(state) >= head);
+}
+
+/*
+ * True only when the slot still holds a different live page whose image is not durable.
+ * Same page, empty, and tombstone are not foreign.
+ */
+static inline bool32 gbp_slot_foreign_unflushed(remote_page_info_t *meta, uint16 file, uint32 page,
+    const void *page_body, uint32 page_size)
+{
+    if (!gbp_slot_names_live_page(meta)) {
+        return OG_FALSE;
+    }
+    if (meta->file_id == file && meta->page_id == page) {
+        return OG_FALSE;
+    }
+    if (gbp_slot_image_flushed(meta, page_body, page_size)) {
+        return OG_FALSE;
+    }
+    return OG_TRUE;
 }
 
 static inline uint64 gbp_page_slot_size(uint32 page_size)

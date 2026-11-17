@@ -48,6 +48,7 @@
 #include "dtc_dls.h"
 #include "dtc_dcs.h"
 #include "dtc_ckpt.h"
+#include "dtc_remote_lock.h"
 #include "knl_rbp.h"
 #include "knl_ckpt.h"
 
@@ -143,12 +144,6 @@ static bool32 ckpt_gbp_read_stable_lsn(buf_ctrl_t *ctrl, uint64 *remote_lsn)
         return OG_FALSE;
     }
 
-    if (shmem_page_meta->file_id != ctrl->page_id.file || shmem_page_meta->page_id != ctrl->page_id.page) {
-        OG_LOG_RUN_WAR("[DTC-GBP-CKPT][%u-%u]: meta page mismatch, remote page %u-%u",
-            ctrl->page_id.file, ctrl->page_id.page, shmem_page_meta->file_id, shmem_page_meta->page_id);
-        return OG_FALSE;
-    }
-
     remote_head_lsn = *(uint64 *)((uint8 *)shmem_page_meta + OFFSET_HEAD_LSN);
     remote_tail_lsn = *gbp_tail_ptr_from_page(ctrl->shmem_page_addr, g_dtc->kernel->attr.page_size);
     if (remote_head_lsn != remote_tail_lsn) {
@@ -166,24 +161,204 @@ static void ckpt_gbp_rollback_claim(remote_page_info_t *shmem_page_meta, uint64 
     (void)gbp_ckpt_cas_state(shmem_page_meta, claimed_state, old_state);
 }
 
+static bool32 ckpt_gbp_store_fence_active(remote_page_info_t *shmem_page_meta)
+{
+    if (shmem_page_meta == NULL || shmem_page_meta->lock_ptr == 0) {
+        return OG_FALSE;
+    }
+    return ub_rw_lock_get_readonly((ub_rw_lock_t *)(uintptr_t)shmem_page_meta->lock_ptr);
+}
+
+/*
+ * Pull local body up to stable remote head before any GBP ckpt claim.
+ * No claim is held yet, so failure paths do not need rollback.
+ */
+static ckpt_gbp_prepare_result_t ckpt_gbp_catchup_local_to_remote(knl_session_t *session, buf_ctrl_t *ctrl,
+    uint64 remote_lsn)
+{
+    bool32 is_load = OG_FALSE;
+    status_t ret = OG_SUCCESS;
+
+    if (ctrl->page->lsn >= remote_lsn) {
+        return CKPT_GBP_PREPARE_FLUSHABLE;
+    }
+
+    ret = dtc_buf_check_local_page(session, ctrl, LATCH_MODE_S, &is_load);
+    if (ret != OG_SUCCESS) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: check local page failed before load from gbp, local_lsn(%llu), "
+            "remote_lsn(%llu), ret(%d)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)remote_lsn, ret);
+        if (cm_get_error_code() == ERR_GBP_MSG_EAGAIN || cm_get_error_code() == ERR_DCS_MSG_EAGAIN) {
+            if (ctrl->shmem_page_meta == NULL) {
+                return CKPT_GBP_PREPARE_SKIP;
+            }
+            return CKPT_GBP_PREPARE_RETRY;
+        }
+        return CKPT_GBP_PREPARE_ERROR;
+    }
+
+    if (is_load || ctrl->page->lsn < remote_lsn) {
+        ret = dtc_buf_try_load_from_gbp(session, ctrl, LATCH_MODE_S);
+    }
+    if (ctrl->gbp_lock_count > 0) {
+        (void)dtc_buf_gbp_unhold(session, ctrl, LATCH_MODE_S);
+    }
+    if (ret != OG_SUCCESS) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: load from gbp failed before checkpoint flush, local_lsn(%llu), "
+            "remote_lsn(%llu), ret(%d)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)remote_lsn, ret);
+        if (cm_get_error_code() == ERR_GBP_MSG_EAGAIN || cm_get_error_code() == ERR_DCS_MSG_EAGAIN) {
+            if (ctrl->shmem_page_meta == NULL) {
+                return CKPT_GBP_PREPARE_SKIP;
+            }
+            return CKPT_GBP_PREPARE_RETRY;
+        }
+        return CKPT_GBP_PREPARE_ERROR;
+    }
+    if (ctrl->page->lsn < remote_lsn) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: retry because local page is still stale after load from gbp, "
+            "local_lsn(%llu), remote_lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)remote_lsn);
+        return CKPT_GBP_PREPARE_RETRY;
+    }
+    return CKPT_GBP_PREPARE_FLUSHABLE;
+}
+
+/* Evicted generation: slot image is already durable; drop local dirty/ckpt and do not write the slot. */
+static void ckpt_drop_retired_gbp_ctrl(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *ctrl)
+{
+    if (ctrl->in_ckpt) {
+        if (ogx->batch_end == ctrl) {
+            ogx->batch_end = ctrl->ckpt_prev;
+        }
+        ckpt_pop_page(session, ogx, ctrl);
+    }
+    ctrl->is_dirty = 0;
+    ctrl->is_remote_dirty = 0;
+    ctrl->is_in_gbp = OG_FALSE;
+    ctrl->is_hot = OG_FALSE;
+    ctrl->shmem_page_meta = NULL;
+    ctrl->shmem_page_addr = NULL;
+    ctrl->gbp_slot_generation = 0;
+    ctrl->force_request = 1;
+    ctrl->lock_mode = DRC_LOCK_NULL;
+}
+
+/*
+ * Drop stale dirty that must not write datafile: leftover without a live mapping, or behind
+ * the eviction barrier_lsn. Leftover origins: (1) promote/migrate without local meta;
+ * (2) post-eviction residual — see dtc_buf_gbp_leftover.
+ */
+static void ckpt_gbp_drop_forbidden_dirty(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *ctrl,
+    const char *reason, uint64 barrier_lsn, bool32 page_in_gbp)
+{
+    (void)reason;
+    (void)barrier_lsn;
+    (void)page_in_gbp;
+    if (ctrl->in_ckpt) {
+        if (ogx->batch_end == ctrl) {
+            ogx->batch_end = ctrl->ckpt_prev;
+        }
+        ckpt_pop_page(session, ogx, ctrl);
+    }
+    ctrl->is_dirty = 0;
+    ctrl->is_remote_dirty = 0;
+    ctrl->force_request = 1;
+}
+
+/*
+ * meta==NULL + GBP leftover only (same gate as try_local / dtc_buf_gbp_leftover):
+ *
+ * 1) Promote/migrate leftover: DRC still is_in_gbp → SKIP (page_still_in_gbp). Local dirty
+ *    must not baseline-flush while the page is hot in GBP without a slot mapping.
+ * 2) Post-eviction leftover: DRC already cold; require page->lsn >= barrier_lsn (buf_res->lsn
+ *    set at eviction) or SKIP (behind_barrier).
+ *
+ * No finish-time raise needed.
+ */
+static ckpt_gbp_prepare_result_t ckpt_gbp_enforce_drc_barrier(knl_session_t *session, ckpt_context_t *ogx,
+    buf_ctrl_t *ctrl, bool32 allow_catchup_retry)
+{
+    uint64 barrier_lsn = 0;
+    bool32 page_in_gbp = OG_FALSE;
+
+    (void)allow_catchup_retry;
+    if (!DB_IS_CLUSTER(session) || !session->kernel->attr.enable_ubsmem) {
+        return CKPT_GBP_PREPARE_FLUSHABLE;
+    }
+    /* Same leftover gate as try_local: ordinary dirty (no GBP flags) must not query DRC. */
+    if (!ctrl->is_in_gbp && !ctrl->is_hot && ctrl->disk_expect_lsn == 0) {
+        return CKPT_GBP_PREPARE_FLUSHABLE;
+    }
+    if (dcs_gbp_get_page_ckpt_guard(session, ctrl->page_id, &barrier_lsn, &page_in_gbp) != OG_SUCCESS) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: retry because ckpt guard query failed, local_lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn);
+        return CKPT_GBP_PREPARE_RETRY;
+    }
+    if (page_in_gbp) {
+        /* Case 1: still hot in GBP (often right after migrate; meta never installed). */
+        ckpt_gbp_drop_forbidden_dirty(session, ogx, ctrl, "page_still_in_gbp", barrier_lsn, page_in_gbp);
+        return CKPT_GBP_PREPARE_SKIP;
+    }
+    if (barrier_lsn == 0 || ctrl->page->lsn >= barrier_lsn) {
+        return CKPT_GBP_PREPARE_FLUSHABLE;
+    }
+    /* Case 2: cold after eviction but local body still behind the eviction floor. */
+    ckpt_gbp_drop_forbidden_dirty(session, ogx, ctrl, "behind_barrier", barrier_lsn, page_in_gbp);
+    return CKPT_GBP_PREPARE_SKIP;
+}
+
+/*
+ * GBP ckpt prepare:
+ * - meta==NULL + leftover: case1 DRC is_in_gbp → SKIP; case2 cold → page->lsn >= barrier_lsn
+ *   (see ckpt_gbp_enforce_drc_barrier / dtc_buf_gbp_leftover). Ordinary dirty flushes as 18a6dbac.
+ * - live mapping: store fence / catchup / slot watermark only (no DRC raise on finish)
+ * - expect_lsn = page->lsn only; never MAX(..., flushed) above body
+ * - expect < flushed => RETRY; == => FLUSHABLE; > => CLAIMED
+ */
 ckpt_gbp_prepare_result_t ckpt_gbp_prepare_flush(knl_session_t *session, ckpt_context_t *ogx, buf_ctrl_t *ctrl,
     uint64 *gbp_ckpt_lsn, uint64 *gbp_claimed_state, uint64 *gbp_old_state)
 {
     remote_page_info_t *shmem_page_meta = ctrl->shmem_page_meta;
     uint64 remote_lsn;
-    uint64 local_lsn;
-    uint64 target_lsn;
+    uint64 expect_lsn;
     uint64 state;
     uint64 flushed_lsn;
     uint64 claimed_state;
-    bool32 is_load = OG_FALSE;
-    status_t ret;
+    ckpt_gbp_prepare_result_t catchup_ret;
 
     *gbp_ckpt_lsn = 0;
     *gbp_claimed_state = 0;
     *gbp_old_state = 0;
-    if (!DB_IS_CLUSTER(session) || !session->kernel->attr.enable_ubsmem || shmem_page_meta == NULL) {
+    if (!DB_IS_CLUSTER(session) || !session->kernel->attr.enable_ubsmem) {
         return CKPT_GBP_PREPARE_FLUSHABLE;
+    }
+
+    /* meta==NULL: only leftover asks DRC (promote or post-evict). Ordinary dirty → 18a6dbac. */
+    if (shmem_page_meta == NULL) {
+        return ckpt_gbp_enforce_drc_barrier(session, ogx, ctrl, OG_FALSE);
+    }
+
+    if (shmem_page_meta->file_id != ctrl->page_id.file || shmem_page_meta->page_id != ctrl->page_id.page ||
+        shmem_page_meta->generation != ctrl->gbp_slot_generation) {
+        ckpt_drop_retired_gbp_ctrl(session, ogx, ctrl);
+        return CKPT_GBP_PREPARE_SKIP;
+    }
+
+    /*
+     * Live GBP mapping: rely on slot watermark / fence / catchup only.
+     * Do not query DRC buf_res->lsn here — that RPC contends with hot migrate/access.
+     * §6 barrier stays on meta==NULL (and compress-all-null) paths.
+     */
+    if (ckpt_gbp_store_fence_active(shmem_page_meta)) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: retry because gbp store fence is active, local_lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn);
+        return CKPT_GBP_PREPARE_RETRY;
     }
 
     if (!ckpt_gbp_read_stable_lsn(ctrl, &remote_lsn)) {
@@ -193,64 +368,87 @@ ckpt_gbp_prepare_result_t ckpt_gbp_prepare_flush(knl_session_t *session, ckpt_co
         return CKPT_GBP_PREPARE_RETRY;
     }
 
+    catchup_ret = ckpt_gbp_catchup_local_to_remote(session, ctrl, remote_lsn);
+    if (catchup_ret != CKPT_GBP_PREPARE_FLUSHABLE) {
+        return catchup_ret;
+    }
+
+    if (ckpt_gbp_store_fence_active(shmem_page_meta)) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: retry because gbp store fence became active after catchup, local_lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn);
+        return CKPT_GBP_PREPARE_RETRY;
+    }
+
+    if (!ckpt_gbp_read_stable_lsn(ctrl, &remote_lsn)) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: retry because gbp lsn became unstable after catchup, local_lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn);
+        return CKPT_GBP_PREPARE_RETRY;
+    }
+    if (ctrl->page->lsn < remote_lsn) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: retry because local fell behind remote after catchup, "
+            "local_lsn(%llu), remote_lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)remote_lsn);
+        return CKPT_GBP_PREPARE_RETRY;
+    }
+
+    expect_lsn = ctrl->page->lsn;
+
     for (;;) {
-        local_lsn = ctrl->page->lsn;
-        target_lsn = MAX(remote_lsn, local_lsn);
         state = gbp_ckpt_get_state(shmem_page_meta);
         if (gbp_ckpt_state_is_marked(state)) {
             OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-                "[DTC-GBP-CKPT][%u-%u]: retry because remote ckpt mark is set, local_lsn(%llu), "
+                "[DTC-GBP-CKPT][%u-%u]: retry because remote ckpt mark is set, expect_lsn(%llu), "
                 "remote_lsn(%llu), mark_lsn(%llu), state(%llu)",
-                ctrl->page_id.file, ctrl->page_id.page, (uint64)local_lsn, (uint64)remote_lsn,
+                ctrl->page_id.file, ctrl->page_id.page, (uint64)expect_lsn, (uint64)remote_lsn,
                 (uint64)gbp_ckpt_state_lsn(state), (uint64)state);
             return CKPT_GBP_PREPARE_RETRY;
         }
 
         flushed_lsn = gbp_ckpt_state_lsn(state);
-        target_lsn = MAX(target_lsn, flushed_lsn);
+        if (expect_lsn < flushed_lsn) {
+            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                "[DTC-GBP-CKPT][%u-%u]: retry because local body is behind flushed watermark, "
+                "expect_lsn(%llu), flushed_lsn(%llu), remote_lsn(%llu)",
+                ctrl->page_id.file, ctrl->page_id.page, (uint64)expect_lsn, (uint64)flushed_lsn,
+                (uint64)remote_lsn);
+            return CKPT_GBP_PREPARE_RETRY;
+        }
+        if (expect_lsn == flushed_lsn) {
+            OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: gbp watermark already covers body, flush without claim, "
+                "expect_lsn(%llu), flushed_lsn(%llu)",
+                ctrl->page_id.file, ctrl->page_id.page, (uint64)expect_lsn, (uint64)flushed_lsn);
+            return CKPT_GBP_PREPARE_FLUSHABLE;
+        }
 
-        claimed_state = gbp_ckpt_pack_state(OG_TRUE, target_lsn);
+        claimed_state = gbp_ckpt_pack_state(OG_TRUE, expect_lsn);
         if (gbp_ckpt_cas_state(shmem_page_meta, state, claimed_state)) {
             break;
         }
     }
 
-    if (ctrl->page->lsn < remote_lsn) {
-        ret = dtc_buf_check_local_page(session, ctrl, LATCH_MODE_S, &is_load);
-        if (ret != OG_SUCCESS) {
-            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-                "[DTC-GBP-CKPT][%u-%u]: check local page failed before load from gbp, local_lsn(%llu), "
-                "remote_lsn(%llu), ret(%d)",
-                ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)remote_lsn, ret);
-            ckpt_gbp_rollback_claim(shmem_page_meta, claimed_state, state);
-            return CKPT_GBP_PREPARE_ERROR;
-        }
-
-        if (is_load || ctrl->page->lsn < remote_lsn) {
-            ret = dtc_buf_try_load_from_gbp(session, ctrl, LATCH_MODE_S);
-        }
-        if (ctrl->gbp_lock_count > 0) {
-            (void)dtc_buf_gbp_unhold(session, ctrl, LATCH_MODE_S);
-        }
-        if (ret != OG_SUCCESS) {
-            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-                "[DTC-GBP-CKPT][%u-%u]: load from gbp failed before checkpoint flush, local_lsn(%llu), "
-                "remote_lsn(%llu), ret(%d)",
-                ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)remote_lsn, ret);
-            ckpt_gbp_rollback_claim(shmem_page_meta, claimed_state, state);
-            return CKPT_GBP_PREPARE_ERROR;
-        }
-        if (ctrl->page->lsn < remote_lsn) {
-            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-                "[DTC-GBP-CKPT][%u-%u]: retry because local page is still stale after load from gbp, "
-                "local_lsn(%llu), remote_lsn(%llu)",
-                ctrl->page_id.file, ctrl->page_id.page, (uint64)ctrl->page->lsn, (uint64)remote_lsn);
-            ckpt_gbp_rollback_claim(shmem_page_meta, claimed_state, state);
-            return CKPT_GBP_PREPARE_RETRY;
-        }
+    if (ckpt_gbp_store_fence_active(shmem_page_meta) || ctrl->page->lsn != expect_lsn) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: rollback claim after fence/body change, expect_lsn(%llu), "
+            "local_lsn(%llu), fence(%u)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)expect_lsn, (uint64)ctrl->page->lsn,
+            (uint32)ckpt_gbp_store_fence_active(shmem_page_meta));
+        ckpt_gbp_rollback_claim(shmem_page_meta, claimed_state, state);
+        return CKPT_GBP_PREPARE_RETRY;
     }
 
-    *gbp_ckpt_lsn = target_lsn;
+    if (!ckpt_gbp_read_stable_lsn(ctrl, &remote_lsn) || expect_lsn < remote_lsn) {
+        OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+            "[DTC-GBP-CKPT][%u-%u]: rollback claim because remote advanced past expect, "
+            "expect_lsn(%llu), remote_lsn(%llu)",
+            ctrl->page_id.file, ctrl->page_id.page, (uint64)expect_lsn, (uint64)remote_lsn);
+        ckpt_gbp_rollback_claim(shmem_page_meta, claimed_state, state);
+        return CKPT_GBP_PREPARE_RETRY;
+    }
+
+    *gbp_ckpt_lsn = expect_lsn;
     *gbp_claimed_state = claimed_state;
     *gbp_old_state = state;
     OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: gbp page need flush, flush_lsn(%llu), state(%llu)",
@@ -259,7 +457,7 @@ ckpt_gbp_prepare_result_t ckpt_gbp_prepare_flush(knl_session_t *session, ckpt_co
     return CKPT_GBP_PREPARE_CLAIMED;
 }
 
-static void ckpt_gbp_finish_remote_flush(ckpt_sort_item *item)
+static void ckpt_gbp_finish_remote_flush(knl_session_t *session, ckpt_sort_item *item)
 {
     remote_page_info_t *shmem_page_meta = NULL;
     uint64 state;
@@ -270,6 +468,15 @@ static void ckpt_gbp_finish_remote_flush(ckpt_sort_item *item)
     }
 
     shmem_page_meta = item->ctrl->shmem_page_meta;
+    if (shmem_page_meta->generation != item->ctrl->gbp_slot_generation ||
+        shmem_page_meta->file_id != item->ctrl->page_id.file ||
+        shmem_page_meta->page_id != item->ctrl->page_id.page) {
+        OG_LOG_DEBUG_INF("[DTC-GBP-CKPT][%u-%u]: skip finish, slot=%u-%u gen=%u ctrl_gen=%u",
+            item->ctrl->page_id.file, item->ctrl->page_id.page, shmem_page_meta->file_id, shmem_page_meta->page_id,
+            shmem_page_meta->generation, item->ctrl->gbp_slot_generation);
+        item->gbp_ckpt_mark = OG_FALSE;
+        return;
+    }
     for (;;) {
         state = gbp_ckpt_get_state(shmem_page_meta);
         if (!gbp_ckpt_state_is_marked(state)) {
@@ -285,10 +492,7 @@ static void ckpt_gbp_finish_remote_flush(ckpt_sort_item *item)
 
         new_state = gbp_ckpt_pack_state(OG_FALSE, item->gbp_ckpt_lsn);
         if (gbp_ckpt_cas_state(shmem_page_meta, item->gbp_claimed_state, new_state)) {
-            OG_LOG_DEBUG_INF_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
-                "[DTC-GBP-CKPT][%u-%u]: flushed gbp page, flush_lsn(%llu), old_state(%llu), new_state(%llu)",
-                item->ctrl->page_id.file, item->ctrl->page_id.page, (uint64)item->gbp_ckpt_lsn,
-                (uint64)item->gbp_claimed_state, (uint64)new_state);
+            /* No finish raise: while is_in_gbp, meta==NULL flush is forbidden; eviction sets lsn. */
             break;
         }
     }
@@ -299,7 +503,7 @@ static void ckpt_gbp_finish_remote_flush(ckpt_sort_item *item)
 static inline void ckpt_finish_flushed_item(knl_session_t *session, ckpt_sort_item *item)
 {
     if (session->kernel->attr.enable_ubsmem) {
-        ckpt_gbp_finish_remote_flush(item);
+        ckpt_gbp_finish_remote_flush(session, item);
     }
     item->ctrl->is_marked = 0;
 }
@@ -3909,6 +4113,16 @@ static status_t ckpt_clean_prepare_compress(knl_session_t *session, ckpt_context
     if (session->kernel->attr.enable_ubsmem) {
         for (i = 0; i < PAGE_GROUP_COUNT; i++) {
             if (ctrl_group[i]->shmem_page_meta != NULL) {
+                for (j = 0; j < PAGE_GROUP_COUNT; j++) {
+                    buf_unlatch(session, ctrl_group[j], OG_FALSE);
+                }
+                return OG_SUCCESS;
+            }
+        }
+        /* All meta NULL: still enforce DRC buf_res->lsn before baseline compress flush (§6). */
+        for (i = 0; i < PAGE_GROUP_COUNT; i++) {
+            if (ckpt_gbp_enforce_drc_barrier(session, ogx, ctrl_group[i], OG_FALSE) !=
+                CKPT_GBP_PREPARE_FLUSHABLE) {
                 for (j = 0; j < PAGE_GROUP_COUNT; j++) {
                     buf_unlatch(session, ctrl_group[j], OG_FALSE);
                 }

@@ -1094,6 +1094,12 @@ const char *g_error_desc[] = {
     [ERR_ACCESS_DEPOSIT_INST] = "failed to access deposit instance, logical id %d physical id %d",
     [ERR_DSS_FAILED] = "failed when calling dss interface, error code: %d, error message = %s",
 
+    /* DCS, range [3000, 3099]; EAGAIN callers pass the detail string as %s.
+     * ERR_GBP_MSG_EAGAIN: disk older than eviction lsn, or GBP slot generation changed. */
+    [ERR_DCS_REQ_PAGE_FAILED] = "dcs request page failed",
+    [ERR_DCS_MSG_EAGAIN] = "%s",
+    [ERR_GBP_MSG_EAGAIN] = "%s",
+
     [ERR_CLUSTER_DDL_DISABLED] = "cluster DDL operation not available, please check whether other instances are open",
     [ERR_CM_OPEN_DISK] = "open disk failed, errno %d",
     [ERR_CM_SEEK_DISK] = "seek disk failed, errno %d",

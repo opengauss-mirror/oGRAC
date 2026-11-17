@@ -630,6 +630,13 @@ static inline uint64 align_to_128m(uint64 size)
 #define OG_MAX_UB_PAGE_HOT_THRESHOLD (uint32)10000
 #define OG_MIN_UB_PAGE_HOT_TIMEOUT (uint32)1                // seconds
 #define OG_MAX_UB_PAGE_HOT_TIMEOUT (uint32)1000             // seconds
+/* GBP recycle under list->lock: keep max well below historical ~70k hang; tunable for large GBP pools. */
+#define OG_MIN_GBP_RECYCLE_SCAN_BUDGET (uint32)1
+#define OG_MAX_GBP_RECYCLE_SCAN_BUDGET (uint32)100000
+#define OG_MIN_GBP_RECYCLE_NEED_CKPT_EARLY (uint32)1
+#define OG_MAX_GBP_RECYCLE_NEED_CKPT_EARLY (uint32)100000
+#define OG_DEFAULT_GBP_RECYCLE_SCAN_BUDGET (uint32)128
+#define OG_DEFAULT_GBP_RECYCLE_NEED_CKPT_EARLY (uint32)16
 
 /* time */
 #define OG_MONTH_PER_YEAR 12
