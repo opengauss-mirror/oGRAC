@@ -201,6 +201,7 @@ static pl_bison_language_def_t *pl_bison_make_invalid_language_def(core_yyscan_t
 static sql_array_t *bison_push_pending_ssa(core_yyscan_t yyscanner);
 static void bison_pop_pending_ssa(core_yyscan_t yyscanner);
 static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner);
+static void bison_finish_select_tail(core_yyscan_t yyscanner, sql_select_t *select_ctx);
 
 /* Please note that the following line will be replaced with the contents of given file name even if with starting with a comment */
 /*$$include "gram-dialect-prologue.y.h"*/
@@ -318,7 +319,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 }
 
 %type <res>    stmtblock stmtmulti stored_pl_source ExplainStmt explain_target_stmt explain_dml_stmt InsertStmt SelectStmt simple_select DeleteStmt select_with_parens select_no_parens
-               UpdateStmt select_clause MergeStmt DropStmt merge_insert merge_when_insert_clause ReplaceStmt TruncateStmt
+               UpdateStmt select_clause select_clause_tail_head MergeStmt DropStmt merge_insert merge_when_insert_clause ReplaceStmt TruncateStmt
                FlashStmt CommentStmt AnalyzeStmt CreatedbStmt CreateUserStmt CreateRoleStmt CreateTenantStmt AlterUserStmt AlterTenantStmt AlterIndexStmt CreateTablespaceStmt
                CreateIndexStmt CreateIndexClusterStmt CreateSequenceStmt CreateViewStmt CreateSynonymStmt CreateProfileStmt CreateDirectoryStmt
                CreateLibraryStmt CreateCtrlfileStmt CreateTableStmt opt_as_select CreateProcedureStmt CreateFunctionStmt
@@ -1865,9 +1866,10 @@ select_no_parens:
                     (void)obj_stack_pop(&og_yyget_extra(yyscanner)->core_yy_extra.withas_stack);
                     $$ = select_ctx;
                 }
-            | select_clause sort_clause
+            | select_clause_tail_head sort_clause
                 {
                     sql_select_t *select_ctx = $1;
+                    bison_finish_select_tail(yyscanner, select_ctx);
                     galist_t **sort_items = NULL;
                     if (select_ctx->root->type == SELECT_NODE_QUERY) {
                         sort_items = &select_ctx->first_query->sort_items;
@@ -1879,9 +1881,10 @@ select_no_parens:
                     }
                     $$ = select_ctx;
                 }
-            | select_clause opt_sort_clause opt_limit for_locking_clause
+            | select_clause_tail_head opt_sort_clause opt_limit for_locking_clause
                 {
                     sql_select_t *select_ctx = $1;
+                    bison_finish_select_tail(yyscanner, select_ctx);
                     galist_t **sort_items = NULL;
                     limit_item_t *limit = NULL;
                     if (select_ctx->root->type == SELECT_NODE_QUERY) {
@@ -1903,9 +1906,10 @@ select_no_parens:
                     select_ctx->for_update_params = $4->for_update_params;
                     $$ = select_ctx;
                 }
-            | select_clause opt_sort_clause select_limit
+            | select_clause_tail_head opt_sort_clause select_limit
                 {
                     sql_select_t *select_ctx = $1;
+                    bison_finish_select_tail(yyscanner, select_ctx);
                     galist_t **sort_items = NULL;
                     limit_item_t *limit = NULL;
                     if (select_ctx->root->type == SELECT_NODE_QUERY) {
@@ -1922,33 +1926,38 @@ select_no_parens:
                     limit->offset = $3->offset;
                     $$ = select_ctx;
                 }
-            | select_clause sort_clause sort_clause
+            | select_clause_tail_head sort_clause sort_clause
                 {
+                    bison_finish_select_tail(yyscanner, $1);
                     OG_SRC_THROW_ERROR(@3.loc, ERR_SQL_SYNTAX_ERROR, "INVALID ORDER");
                     YYABORT;
                 }
-            | select_clause opt_sort_clause limit_clause limit_clause
+            | select_clause_tail_head opt_sort_clause limit_clause limit_clause
                 {
+                    bison_finish_select_tail(yyscanner, $1);
                     OG_SRC_THROW_ERROR(@4.loc, ERR_SQL_SYNTAX_ERROR, "INVALID LIMIT");
                     YYABORT;
                 }
-            | select_clause sort_clause set_operator select_clause
+            | select_clause_tail_head sort_clause set_operator select_clause
                 {
+                    bison_finish_select_tail(yyscanner, $1);
                     OG_SRC_THROW_ERROR(@3.loc, ERR_SQL_SYNTAX_ERROR,
                         "\"LIMIT\" clause or \"ORDER BY\" clause of "
                         "the subset should be placed inside the parentheses that enclose the SELECT");
                     YYABORT;
                 }
-            | select_clause opt_sort_clause select_limit set_operator select_clause
+            | select_clause_tail_head opt_sort_clause select_limit set_operator select_clause
                 {
+                    bison_finish_select_tail(yyscanner, $1);
                     OG_SRC_THROW_ERROR(@4.loc, ERR_SQL_SYNTAX_ERROR,
                         "\"LIMIT\" clause or \"ORDER BY\" clause of "
                         "the subset should be placed inside the parentheses that enclose the SELECT");
                     YYABORT;
                 }
-            | with_clause select_clause sort_clause
+            | with_clause select_clause_tail_head sort_clause
                 {
                     sql_select_t *select_ctx = $2;
+                    bison_finish_select_tail(yyscanner, select_ctx);
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_withas_factor_t *factor = NULL;
                     if (select_ctx->withass == NULL && sql_create_list(stmt, &select_ctx->withass) != OG_SUCCESS) {
@@ -1973,9 +1982,10 @@ select_no_parens:
                     }
                     $$ = select_ctx;
                 }
-            | with_clause select_clause opt_sort_clause opt_limit for_locking_clause
+            | with_clause select_clause_tail_head opt_sort_clause opt_limit for_locking_clause
                 {
                     sql_select_t *select_ctx = $2;
+                    bison_finish_select_tail(yyscanner, select_ctx);
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_withas_factor_t *factor = NULL;
                     if (select_ctx->withass == NULL && sql_create_list(stmt, &select_ctx->withass) != OG_SUCCESS) {
@@ -2010,9 +2020,10 @@ select_no_parens:
                     select_ctx->for_update_params = $5->for_update_params;
                     $$ = select_ctx;
                 }
-            | with_clause select_clause opt_sort_clause select_limit
+            | with_clause select_clause_tail_head opt_sort_clause select_limit
                 {
                     sql_select_t *select_ctx = $2;
+                    bison_finish_select_tail(yyscanner, select_ctx);
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
                     sql_withas_factor_t *factor = NULL;
                     if (select_ctx->withass == NULL && sql_create_list(stmt, &select_ctx->withass) != OG_SUCCESS) {
@@ -2114,6 +2125,18 @@ select_limit:
 select_clause:
             simple_select                           { $$ = $1; }
             | select_with_parens                    { $$ = $1; }
+        ;
+
+select_clause_tail_head:
+            select_clause
+                {
+                    sql_select_t *select_ctx = $1;
+                    if (select_ctx->root->type == SELECT_NODE_QUERY) {
+                        sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
+                        BISON_ABORT_IFERR(SQL_SSA_PUSH(stmt, &select_ctx->first_query->ssa));
+                    }
+                    $$ = select_ctx;
+                }
         ;
 
 opt_found_rows:
@@ -18810,6 +18833,23 @@ static sql_array_t *bison_current_pending_ssa(core_yyscan_t yyscanner)
         return OGSQL_CURR_SSA(stmt);
     }
     return &og_yyget_extra(yyscanner)->core_yy_extra.ssa;
+}
+
+static void bison_finish_select_tail(core_yyscan_t yyscanner, sql_select_t *select_ctx)
+{
+    if (select_ctx->root->type != SELECT_NODE_QUERY) {
+        return;
+    }
+
+    /* Tail subqueries extend the query's SSA so their expression IDs stay unique. */
+    sql_query_t *query = select_ctx->first_query;
+    for (uint32 i = 0; i < query->ssa.count; i++) {
+        sql_select_t *subselect = (sql_select_t *)sql_array_get(&query->ssa, i);
+        if (subselect->parent == NULL) {
+            subselect->parent = query;
+        }
+    }
+    bison_pop_pending_ssa(yyscanner);
 }
 
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending)
