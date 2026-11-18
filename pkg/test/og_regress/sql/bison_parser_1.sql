@@ -1218,6 +1218,8 @@ insert into func_res_test_bison(result) SELECT CONVERT('2018-06-28 13:14:15', ti
 insert into func_res_test_bison(result) SELECT TRIM(LEADING '1' FROM '123sfd111');
 insert into func_res_test_bison(result) SELECT TRIM( '123sfd111','1');
 
+select insert('abc', 2, 1, 'X') as r1, insert /*+ RULE */ ('abc', 2, 1, 'X') as r2 from sys_dummy;
+
 select * from func_res_test_bison order by id;
 
 ------------------------------------

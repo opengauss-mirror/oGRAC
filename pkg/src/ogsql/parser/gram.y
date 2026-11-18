@@ -5699,6 +5699,27 @@ func_application: func_name '(' ')'
                         }
                         $$ = expr;
                     }
+                | INSERT hint_string '(' func_arg_list ')'
+                    {
+                        galist_t *name_list = NULL;
+                        if (sql_create_temp_list(og_yyget_extra(yyscanner)->core_yy_extra.stmt, &name_list) != OG_SUCCESS) {
+                            parser_abort_or_yyerror("create function name list failed.");
+                        }
+                        expr_tree_t *name = NULL;
+                        if (sql_create_string_const_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                            &name, "INSERT", @1.loc) != OG_SUCCESS) {
+                            parser_abort_or_yyerror("init const expr failed");
+                        }
+                        if (cm_galist_insert(name_list, name) != OG_SUCCESS) {
+                            parser_abort_or_yyerror("insert function list failed.");
+                        }
+                        expr_tree_t *expr = NULL;
+                        if (sql_create_funccall_expr(og_yyget_extra(yyscanner)->core_yy_extra.stmt,
+                            &expr, name_list, $4, @1.loc) != OG_SUCCESS) {
+                            parser_abort_or_yyerror("init function call expr failed");
+                        }
+                        $$ = expr;
+                    }
                 | VALUES '(' func_arg_list ')'
                     {
                         galist_t *name_list = NULL;
