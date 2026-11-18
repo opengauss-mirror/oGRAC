@@ -1671,6 +1671,11 @@ status_t srv_load_kernel_params(void)
     // for ub gbp
     OG_RETURN_IFERR(srv_get_param_bool32("_ENABLE_REMOTE_DISTRIBUTE_LOCK", &attr->enable_remote_distribute_lock));
     OG_RETURN_IFERR(srv_get_param_bool32("_ENABLE_UBSMEM", &attr->enable_ubsmem));
+    OG_RETURN_IFERR(srv_get_param_bool32("_ENABLE_SCN_UBSMEM", &attr->enable_scn_ubsmem));
+    if (attr->enable_ubsmem && attr->enable_scn_ubsmem) {
+        OG_LOG_RUN_WAR("[SHMEM-SCN] _ENABLE_SCN_UBSMEM has no layout effect while _ENABLE_UBSMEM is TRUE "
+            "(SCN stays in GBP remote SGA)");
+    }
     OG_RETURN_IFERR(srv_get_param_size_uint32("_UB_PAGE_HOT_THRESHOLD", &attr->ub_page_hot_threshold));
     if (attr->ub_page_hot_threshold < OG_MIN_UB_PAGE_HOT_THRESHOLD) {
         OG_THROW_ERROR(ERR_PARAMETER_TOO_SMALL, "_UB_PAGE_HOT_THRESHOLD", OG_MIN_UB_PAGE_HOT_THRESHOLD);

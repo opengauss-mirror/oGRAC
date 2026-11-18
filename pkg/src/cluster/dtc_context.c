@@ -392,6 +392,8 @@ static status_t dtc_register_proc(void)
         dtc_register_proc_func(MES_CMD_ARCH_SET_REQ, dcs_process_arch_set_request, OG_TRUE, "arch set req"));
     knl_securec_check(
         dtc_register_proc_func(MES_CMD_TIME_BROADCAST, dtc_process_time_broadcast, OG_FALSE, "TIME broadcast"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_SHMEM_SCN_FALLBACK_NOTIFY, NULL, OG_FALSE,
+                                             "SHMEM SCN fallback notify"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_SET_INCREMENT_UNBLOCK, dtc_bak_process_set_inc_unblock, OG_TRUE,
         "set bak increment unblock"));
     knl_securec_check(dtc_register_proc_func(MES_CMD_SET_INCREMENT_UNBLOCK_ACK, mes_process_msg_ack, OG_FALSE,
@@ -564,9 +566,11 @@ status_t dtc_startup(void)
     g_dtc->profile.inst_id = kernel->dtc_attr.inst_id;
     g_dtc->profile.node_count = kernel->db.ctrl.core.node_count;
 
-    if (kernel->attr.enable_ubsmem && ub_init_ubsm_mem() != OG_SUCCESS) {
-        OG_LOG_RUN_WAR("UB shared memory is unavailable, _ENABLE_UBSMEM disabled for this instance");
+    if ((kernel->attr.enable_ubsmem || kernel->attr.enable_scn_ubsmem) &&
+        ub_init_ubsm_mem() != OG_SUCCESS) {
+        OG_LOG_RUN_WAR("UB shared memory is unavailable, disable UB features for this instance");
         kernel->attr.enable_ubsmem = OG_FALSE;
+        kernel->attr.enable_scn_ubsmem = OG_FALSE;
         kernel->attr.enable_remote_distribute_lock = OG_FALSE;
     }
 
@@ -577,6 +581,11 @@ status_t dtc_startup(void)
 
     if (shmem_scn_init() != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[SHMEM-SCN] init failed.");
+        return OG_ERROR;
+    }
+
+    if (shmem_scn_prepare_persist() != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[SHMEM-SCN] prepare persist file failed");
         return OG_ERROR;
     }
 
@@ -620,8 +629,15 @@ status_t dtc_startup(void)
         return OG_ERROR;
     }
 
-    if (g_instance->kernel.attr.enable_ubsmem && shmem_scn_sync_to_ub() != OG_SUCCESS) {
+    if ((g_instance->kernel.attr.enable_ubsmem || g_instance->kernel.attr.enable_scn_ubsmem) &&
+        shmem_scn_sync_to_ub() != OG_SUCCESS) {
         OG_LOG_RUN_WAR("[SHMEM-SCN] sync to UB deferred at startup, will retry at db open");
+    }
+
+    if ((g_instance->kernel.attr.enable_ubsmem || g_instance->kernel.attr.enable_scn_ubsmem) &&
+        shmem_scn_start_persist() != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[SHMEM-SCN] start persist thread failed");
+        return OG_ERROR;
     }
 
     OG_LOG_RUN_INF("dtc_startup finish, memory usage=%lu", cm_print_memory_usage());
@@ -698,9 +714,15 @@ void dtc_shutdown(knl_session_t *session, bool32 need_ckpt)
     drc_res_ctx_t *ogx = DRC_RES_CTX;
 
     shmem_scn_cleanup();
-    if (session->kernel->attr.enable_ubsmem &&
-        drc_deinit_ubsm_mem(&ogx->remote_sga, g_dtc->profile.node_count) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("failed to deinit ubsm_mem");
+    if (session->kernel->attr.enable_ubsmem) {
+        if (drc_deinit_ubsm_mem(&ogx->remote_sga, g_dtc->profile.node_count) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("failed to deinit ubsm_mem");
+        }
+    } else if (session->kernel->attr.enable_scn_ubsmem) {
+        /* SCN-only dedicated UB: region already torn down in shmem_scn_cleanup. */
+        if (ubsmem_finalize() != UBSM_OK) {
+            OG_LOG_RUN_ERR("ubsmem_finalize failed for SCN-only UB");
+        }
     }
     free_dtc_rc();
     dmon_close();

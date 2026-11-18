@@ -200,6 +200,8 @@ config_item_t g_parameters[] = {
     { "_ENABLE_UBSMEM", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
       PARAM__ENABLE_UBSMEM, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_bool, sql_notify_als_enable_ubsmem,
       sql_notify_als_bool, NULL },
+    { "_ENABLE_SCN_UBSMEM", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL,
+      PARAM__ENABLE_SCN_UBSMEM, EFFECT_REBOOT, CFG_INS, sql_verify_als_bool, NULL, NULL, NULL },
     { "_UB_PAGE_HOT_THRESHOLD", OG_TRUE, ATTR_NONE, "100", NULL, NULL, "-", "[1,10000]", "OG_TYPE_INTEGER", NULL,
       PARAM__UB_PAGE_HOT_THRESHOLD, EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_ub_page_hot_threshold,
       sql_notify_als_ub_page_hot_threshold, NULL, NULL },

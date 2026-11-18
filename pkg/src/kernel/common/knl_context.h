@@ -257,6 +257,7 @@ typedef struct st_knl_attr {
     bool32 temptable_support_batch;
     bool32 enable_remote_distribute_lock;
     bool32 enable_ubsmem;
+    bool32 enable_scn_ubsmem; /* without enable_ubsmem: dedicated SCN UB; with enable_ubsmem SCN stays in GBP */
     uint32 ub_page_hot_threshold;
     uint32 ub_page_hot_timeout;
     /* GBP recycle: max LRU nodes scanned per attempt; need_ckpt hits before early ckpt (EFFECT_IMMEDIATELY). */

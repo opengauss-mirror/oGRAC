@@ -36,9 +36,17 @@ target_include_directories(ogrst PUBLIC
         "${OGRACDB_SRC}/cms/interface"
         )
 if (USE_FUZZASAN)
-    target_link_libraries(ogrst PRIVATE ogserver ogracsql ogmes ogprotocol ogkernel ogclient ogcommon m rt pthread dl z zstd lz4 Secodefuzz) 
+    target_link_libraries(ogrst PRIVATE
+                          -Wl,--start-group
+                          ogserver ogracsql ogmes ogprotocol ogkernel ogclient ogcommon
+                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4 Secodefuzz
+                          -Wl,--end-group)
 else()
-    target_link_libraries(ogrst PRIVATE ogserver ogracsql ogmes ogprotocol ogkernel ogclient ogcommon m rt pthread dl z zstd lz4)
+    target_link_libraries(ogrst PRIVATE
+                          -Wl,--start-group
+                          ogserver ogracsql ogmes ogprotocol ogkernel ogclient ogcommon
+                          ogcluster ogcms ogrc m rt pthread dl z zstd lz4
+                          -Wl,--end-group)
 endif(USE_FUZZASAN)
 target_compile_definitions(ogrst PRIVATE -DOG_LIB_VERSION=${DD_OG_LIB_VERSION})
 target_compile_definitions(ogrst PRIVATE -DGETDBVERSION=${DD_GETDBVERSION})

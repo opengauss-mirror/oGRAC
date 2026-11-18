@@ -214,6 +214,8 @@ typedef enum en_mes_command {
     MES_CMD_BROADCAST_REMOTE_BUF_MMAP,
     MES_CMD_MASTER_ACK_ALREADY_IN_GBP,
 
+    MES_CMD_SHMEM_SCN_FALLBACK_NOTIFY,
+
     MES_CMD_CEIL
 } mes_command_t;
 

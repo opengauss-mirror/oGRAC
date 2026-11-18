@@ -77,24 +77,37 @@ void shmem_scn_absorb_peers(void);
 #ifndef WIN32
 extern volatile uint64 *g_ub_global_scn;
 void shmem_scn_fanout_raise(uint64 scn);
+knl_scn_t shmem_scn_ub_atomic_read(volatile uint64 *p);
+void shmem_scn_ub_atomic_raise(volatile uint64 *p, uint64 scn);
+knl_scn_t shmem_scn_ub_atomic_inc(volatile uint64 *p);
 
 static inline knl_scn_t knl_get_ub_scn(atomic_t *p_scn)
 {
     volatile uint64 *ub_scn = g_ub_global_scn;
+    knl_scn_t val;
 
     if (ub_scn == NULL) {
         return KNL_GET_SCN(p_scn);
     }
-    return (knl_scn_t)ub_atomic_read_u64(ub_scn);
+    val = shmem_scn_ub_atomic_read(ub_scn);
+    if (g_ub_global_scn == NULL) {
+        return KNL_GET_SCN(p_scn);
+    }
+    return val;
 }
 
-static inline void knl_set_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+/* Local slot only; no peer fan-out. */
+static inline void knl_set_ub_scn_local(atomic_t *p_scn, knl_scn_t scn)
 {
     volatile uint64 *ub_scn = g_ub_global_scn;
 
     if (ub_scn != NULL) {
-        ub_atomic_raise_u64(ub_scn, (uint64)scn);
-        shmem_scn_fanout_raise((uint64)scn);
+        shmem_scn_ub_atomic_raise(ub_scn, (uint64)scn);
+        if (g_ub_global_scn == NULL) {
+            if (scn > KNL_GET_SCN(p_scn)) {
+                KNL_SET_SCN(p_scn, scn);
+            }
+        }
         return;
     }
     if (scn > KNL_GET_SCN(p_scn)) {
@@ -102,21 +115,7 @@ static inline void knl_set_ub_scn(atomic_t *p_scn, knl_scn_t scn)
     }
 }
 
-/* Raise local SCN only: UB slot without peer fan-out, or kernel->scn if UB not ready. */
-static inline void knl_raise_local_ub_scn(atomic_t *p_scn, knl_scn_t scn)
-{
-    volatile uint64 *ub_scn = g_ub_global_scn;
-
-    if (ub_scn != NULL) {
-        ub_atomic_raise_u64(ub_scn, (uint64)scn);
-        return;
-    }
-    if (scn > KNL_GET_SCN(p_scn)) {
-        KNL_SET_SCN(p_scn, scn);
-    }
-}
-
-static inline knl_scn_t knl_inc_ub_scn(atomic_t *p_scn)
+static inline knl_scn_t knl_inc_ub_scn_local(atomic_t *p_scn)
 {
     volatile uint64 *ub_scn = g_ub_global_scn;
     knl_scn_t val;
@@ -124,10 +123,40 @@ static inline knl_scn_t knl_inc_ub_scn(atomic_t *p_scn)
     if (ub_scn == NULL) {
         return KNL_INC_SCN(p_scn);
     }
+    val = shmem_scn_ub_atomic_inc(ub_scn);
+    if (g_ub_global_scn == NULL) {
+        return KNL_GET_SCN(p_scn);
+    }
+    return val;
+}
+
+static inline void knl_set_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+{
+    knl_set_ub_scn_local(p_scn, scn);
+    if (g_ub_global_scn != NULL) {
+        shmem_scn_fanout_raise((uint64)scn);
+    }
+}
+
+/* Raise local SCN only: UB slot without peer fan-out, or kernel->scn if UB not ready. */
+static inline void knl_raise_local_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+{
+    knl_set_ub_scn_local(p_scn, scn);
+}
+
+static inline knl_scn_t knl_inc_ub_scn(atomic_t *p_scn)
+{
+    knl_scn_t val;
+
+    if (g_ub_global_scn == NULL) {
+        return KNL_INC_SCN(p_scn);
+    }
     /* max(local, peers) is installed in the local slot, then +1. */
     shmem_scn_absorb_peers();
-    val = (knl_scn_t)ub_atomic_add_fetch_u64(ub_scn, 1);
-    shmem_scn_fanout_raise((uint64)val);
+    val = knl_inc_ub_scn_local(p_scn);
+    if (g_ub_global_scn != NULL) {
+        shmem_scn_fanout_raise((uint64)val);
+    }
     return val;
 }
 #else
@@ -136,23 +165,31 @@ static inline knl_scn_t knl_get_ub_scn(atomic_t *p_scn)
     return KNL_GET_SCN(p_scn);
 }
 
-static inline void knl_set_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+static inline void knl_set_ub_scn_local(atomic_t *p_scn, knl_scn_t scn)
 {
     if (scn > KNL_GET_SCN(p_scn)) {
         KNL_SET_SCN(p_scn, scn);
     }
+}
+
+static inline knl_scn_t knl_inc_ub_scn_local(atomic_t *p_scn)
+{
+    return KNL_INC_SCN(p_scn);
+}
+
+static inline void knl_set_ub_scn(atomic_t *p_scn, knl_scn_t scn)
+{
+    knl_set_ub_scn_local(p_scn, scn);
 }
 
 static inline void knl_raise_local_ub_scn(atomic_t *p_scn, knl_scn_t scn)
 {
-    if (scn > KNL_GET_SCN(p_scn)) {
-        KNL_SET_SCN(p_scn, scn);
-    }
+    knl_set_ub_scn_local(p_scn, scn);
 }
 
 static inline knl_scn_t knl_inc_ub_scn(atomic_t *p_scn)
 {
-    return KNL_INC_SCN(p_scn);
+    return knl_inc_ub_scn_local(p_scn);
 }
 #endif
 

@@ -62,6 +62,7 @@
 #include "dtc_context.h"
 #include "dtc_dls.h"
 #include "dtc_database.h"
+#include "dtc_shmem_scn_sigbus.h"
 #include "rc_reform.h"
 #include "knl_ckpt.h"
 #include "cm_debug.h"
@@ -2132,6 +2133,16 @@ status_t srv_instance_startup(db_startup_phase_t phase, bool32 is_coordinator, b
     if (sigcap_handle_reg() != OG_SUCCESS) {
         srv_instance_destroy();
         OG_LOG_RUN_ERR("Failed to initialize SIGSEGV func");
+        return OG_ERROR;
+    }
+
+    /*
+     * sigcap_handle_reg() above overwrites SIGBUS with blackbox. If SHMEM-SCN
+     * already installed its labeled handler in dtc_startup(), put it back on top.
+     */
+    if (shmem_scn_sigbus_ensure_registered() != OG_SUCCESS) {
+        srv_instance_destroy();
+        OG_LOG_RUN_ERR("[SHMEM-SCN] Failed to reinstall SIGBUS handler after blackbox");
         return OG_ERROR;
     }
 #endif

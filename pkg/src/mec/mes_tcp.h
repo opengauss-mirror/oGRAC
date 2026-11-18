@@ -47,6 +47,11 @@ bool32 mes_tcp_connection_ready(uint32 inst_id);
 mes_channel_stat_t mes_tcp_get_channel_state(uint32 inst_id);
 bool32 mes_ssl_connection_ready(uint32 inst_id);
 
+/* One-shot MES_CMD_SHMEM_SCN_FALLBACK_NOTIFY with seed SCN for peer local raise. */
+status_t mes_tcp_send_scn_fallback_notify(uint32 dst_inst, uint64 seed_scn);
+typedef void (*mes_scn_fallback_notify_cb_t)(uint32 src_inst, uint64 seed_scn);
+void mes_set_scn_fallback_notify_cb(mes_scn_fallback_notify_cb_t cb);
+
 #ifdef __cplusplus
 }
 #endif

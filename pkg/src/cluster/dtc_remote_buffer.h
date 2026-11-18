@@ -79,7 +79,7 @@ typedef struct st_remote_sga {
     char *data_buf; /* each remote data buf is managed by master node. */
     char *lock_buf;
     char *node_flush_lsn;
-    char *shmem_scn; /* local node SCN slot (64B aligned) inside remote SGA */
+    char *shmem_scn; /* local SCN slot in GBP remote SGA; NULL when dedicated SCN UB */
     uint64 txn_hot_offset;
     uint64 txn_hot_region_size;
     /* OG_TRUE after region+data both newly created and pool zeroed; any leftover fails startup. */
@@ -103,8 +103,15 @@ static inline uint64 drc_get_node_flush_lsn_offset(const remote_sga_t *remote_sg
 
 /*
  * remote SGA layout:
- *   data | dist_que | dist_lck | node_flush_lsn | shmem_scn(64B-aligned) | txn_hot...
+ *   data | dist_que | dist_lck | node_flush_lsn | shmem_scn(64B) | txn_hot...
+ * With _ENABLE_UBSMEM, SCN always occupies the GBP slot (even if _ENABLE_SCN_UBSMEM).
+ * Dedicated SCN UB is only used when _ENABLE_UBSMEM is off.
  */
+static inline uint64 drc_get_gbp_shmem_scn_size(void)
+{
+    return DRC_SHMEM_SCN_SIZE;
+}
+
 static inline uint64 drc_get_shmem_scn_offset(const remote_sga_t *remote_sga)
 {
     uint64 base = drc_get_node_flush_lsn_offset(remote_sga) + DRC_NODE_FLUSH_LSN_SIZE;
@@ -114,6 +121,9 @@ static inline uint64 drc_get_shmem_scn_offset(const remote_sga_t *remote_sga)
 static inline char *drc_get_shmem_scn_addr(remote_sga_t *remote_sga, uint32 node_id)
 {
     if (remote_sga == NULL || node_id >= OG_MAX_INSTANCES || remote_sga->remote_buf_addr[node_id] == NULL) {
+        return NULL;
+    }
+    if (drc_get_gbp_shmem_scn_size() == 0) {
         return NULL;
     }
     return remote_sga->remote_buf_addr[node_id] + drc_get_shmem_scn_offset(remote_sga);

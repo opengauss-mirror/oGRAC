@@ -54,6 +54,12 @@ const char* g_stat_str[] = {
 static char                 g_res_type[CMS_MAX_RES_TYPE_LEN] = {0};
 int8                        g_inst_id = -1;
 static cms_notify_func_t    g_notify_func;
+static cms_xalarm_stop_ub_cb_t g_xalarm_stop_ub_cb = NULL;
+
+void cms_cli_set_xalarm_stop_ub_cb(cms_xalarm_stop_ub_cb_t cb)
+{
+    g_xalarm_stop_ub_cb = cb;
+}
 static cms_master_op_t      g_master_func;
 static cms_upgrade_op_t     g_upgrade_func;
 static cms_write_protect_op_t g_writeProtectFunc;
@@ -705,6 +711,15 @@ static void cms_cli_proc_msg_req_xalarm_notify(cms_packet_head_t *msg)
     } else {
         OG_LOG_RUN_INF("recv xalarm notify from cms, alarmId=%u, faultNode=%u, cna=%u, srcNode=%u",
             req->alarm_id, req->alarm_node_id, req->cna, req->source_node_id);
+        /*
+         * sysSentry 1003/1007/1009: if UB SCN was in use, degrade to local+broadcast
+         * (same path as SIGBUS/UB fault). Always ACK after local handling starts.
+         */
+        if (cms_xalarm_should_stop_ub_scn(req->alarm_id) && g_xalarm_stop_ub_cb != NULL) {
+            OG_LOG_RUN_WAR("cms xalarm stop-ub notify: invoke UB SCN fallback, alarmId=%u, faultNode=%u",
+                req->alarm_id, req->alarm_node_id);
+            g_xalarm_stop_ub_cb(req->alarm_id, req->alarm_node_id);
+        }
         res.result = OG_SUCCESS;
     }
 

@@ -36,6 +36,35 @@
 
 #define MES_HOST_NAME(id) ((char *)g_mes.profile.inst_arr[id].ip)
 
+static mes_scn_fallback_notify_cb_t g_mes_scn_fallback_notify_cb = NULL;
+
+void mes_set_scn_fallback_notify_cb(mes_scn_fallback_notify_cb_t cb)
+{
+    g_mes_scn_fallback_notify_cb = cb;
+}
+
+/*
+ * Control-plane one-shot messages (e.g. SCN fallback notify) hit the accept
+ * listener before MES_CMD_CONNECT; handle inline and disconnect.
+ */
+static bool32 mes_tcp_try_handle_ctrl_message(cs_pipe_t *pipe, mes_message_t *msg)
+{
+    if (msg->head->cmd == (uint8)MES_CMD_SHMEM_SCN_FALLBACK_NOTIFY) {
+        uint64 seed_scn = 0;
+
+        if (msg->head->size >= sizeof(mes_message_head_t) + sizeof(uint64)) {
+            seed_scn = *(uint64 *)(msg->buffer + sizeof(mes_message_head_t));
+        }
+        cs_disconnect(pipe);
+        if (g_mes_scn_fallback_notify_cb != NULL) {
+            g_mes_scn_fallback_notify_cb((uint32)msg->head->src_inst, seed_scn);
+        }
+        return OG_TRUE;
+    }
+
+    return OG_FALSE;
+}
+
 #define MES_CHANNEL_TIMEOUT (50)
 
 #define MES_SESSION_TO_CHANNEL_ID(sid) (uint8)((sid) % g_mes.profile.channel_num)
@@ -269,6 +298,11 @@ static status_t mes_ssl_inner_accept(cs_pipe_t *pipe)
         return OG_ERROR;
     }
 
+    if (mes_tcp_try_handle_ctrl_message(pipe, &msg)) {
+        cm_free(msg_buf);
+        return OG_SUCCESS;
+    }
+
     if (msg.head->cmd != (uint8)MES_CMD_CONNECT) {
         OG_THROW_ERROR_EX(ERR_MES_INVALID_CMD, "when building connection type %u", msg.head->cmd);
         cm_free(msg_buf);
@@ -329,6 +363,11 @@ static status_t mes_accept(cs_pipe_t *pipe)
         OG_LOG_RUN_ERR("[mes]: read message failed.");
         cm_free(msg_buf);
         return OG_ERROR;
+    }
+
+    if (mes_tcp_try_handle_ctrl_message(pipe, &msg)) {
+        cm_free(msg_buf);
+        return OG_SUCCESS;
     }
 
     if (msg.head->cmd != (uint8)MES_CMD_CONNECT) {
@@ -1019,4 +1058,114 @@ bool32 mes_ssl_connection_ready(uint32 inst_id)
         }
     }
     return OG_TRUE;
+}
+
+status_t mes_tcp_send_scn_fallback_notify(uint32 dst_inst, uint64 seed_scn)
+{
+    char peer_url[MES_URL_BUFFER_SIZE];
+    cs_pipe_t pipe;
+    ssl_ctx_t *ssl_ctx = NULL;
+    char send_buf[sizeof(mes_message_head_t) + sizeof(uint64)];
+    mes_message_head_t *head = (mes_message_head_t *)send_buf;
+    status_t status;
+    int32 ret;
+    errno_t err;
+
+    if (dst_inst >= OG_MAX_INSTANCES || dst_inst == g_mes.profile.inst_id) {
+        return OG_ERROR;
+    }
+    if (CM_IS_EMPTY_STR(g_mes.profile.inst_arr[dst_inst].ip) || g_mes.profile.inst_arr[dst_inst].port == 0) {
+        OG_LOG_RUN_ERR("[mes] no valid ip/port for scn fallback notify to inst %u", dst_inst);
+        return OG_ERROR;
+    }
+
+    ret = snprintf_s(peer_url, MES_URL_BUFFER_SIZE, MES_URL_BUFFER_SIZE, "%s:%u", MES_HOST_NAME(dst_inst),
+        g_mes.profile.inst_arr[dst_inst].port);
+    if (ret < 0) {
+        return OG_ERROR;
+    }
+
+    err = memset_sp(&pipe, sizeof(pipe), 0, sizeof(pipe));
+    MEMS_RETURN_IFERR(err);
+    pipe.connect_timeout = OG_CONNECT_TIMEOUT;
+    pipe.l_onoff = 1;
+    pipe.l_linger = 1;
+
+    if (g_mes.profile.use_ssl) {
+        char url_path[OG_FILE_NAME_BUFFER_SIZE];
+        uint16 url_port;
+        socket_attr_t sock_attr = { .connect_timeout = pipe.connect_timeout,
+            .l_onoff = pipe.l_onoff,
+            .l_linger = pipe.l_linger };
+        if (mes_ssl_parse_url((const char *)&peer_url[0], url_path, &url_port) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        if (cs_tcp_connect(url_path, url_port, &pipe.link.tcp, NULL, &sock_attr) != OG_SUCCESS) {
+            MES_LOGGING(MES_LOGGING_CONNECT, "scn fallback notify connect to %s failed", peer_url);
+            return OG_ERROR;
+        }
+    } else if (cs_connect(peer_url, &pipe, NULL, NULL, NULL) != OG_SUCCESS) {
+        MES_LOGGING(MES_LOGGING_CONNECT, "scn fallback notify connect to %s failed", peer_url);
+        return OG_ERROR;
+    }
+
+    if (g_mes.profile.use_ssl) {
+        ssl_config_t ssl_config = { 0 };
+        ssl_auth_file_t *auth_file = mes_get_ssl_auth_file();
+        ssl_config.ca_file = auth_file->ca_file;
+        ssl_config.cert_file = auth_file->cert_file;
+        ssl_config.key_file = auth_file->key_file;
+        ssl_config.crl_file = auth_file->crl_file;
+        ssl_config.verify_peer = g_mes.profile.ssl_verify_peer;
+        char plain_pwd[OG_PASSWD_MAX_LEN] = { 0 };
+        char *enc_pwd = mes_get_ssl_auth_file()->key_pwd;
+        if (!CM_IS_EMPTY_STR(enc_pwd)) {
+            if (mes_ssl_decode_key_pwd(enc_pwd, strlen(enc_pwd), plain_pwd, OG_PASSWD_MAX_LEN) != OG_SUCCESS) {
+                cs_disconnect(&pipe);
+                return OG_ERROR;
+            }
+            ssl_config.key_password = plain_pwd;
+        }
+        ssl_ctx = cs_ssl_create_connector_fd(&ssl_config);
+        if (ssl_ctx == NULL) {
+            OG_LOG_RUN_ERR("[mes] create ssl connector for scn fallback notify failed");
+            cs_disconnect(&pipe);
+            return OG_ERROR;
+        }
+        if (cs_ssl_connect(ssl_ctx, &pipe) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[mes] ssl handshake for scn fallback notify to %s failed", peer_url);
+            cs_ssl_free_context(ssl_ctx);
+            cs_disconnect(&pipe);
+            return OG_ERROR;
+        }
+    }
+
+    err = memset_sp(send_buf, sizeof(send_buf), 0, sizeof(send_buf));
+    if (err != EOK) {
+        if (ssl_ctx != NULL) {
+            cs_ssl_free_context(ssl_ctx);
+        }
+        cs_disconnect(&pipe);
+        return OG_ERROR;
+    }
+    head->cmd = (uint8)MES_CMD_SHMEM_SCN_FALLBACK_NOTIFY;
+    head->src_inst = (uint8)g_mes.profile.inst_id;
+    head->dst_inst = (uint8)dst_inst;
+    head->size = (uint32)sizeof(send_buf);
+    *(uint64 *)(send_buf + sizeof(mes_message_head_t)) = seed_scn;
+
+    status = cs_send_bytes(&pipe, send_buf, sizeof(send_buf));
+
+    if (ssl_ctx != NULL) {
+        cs_ssl_free_context(ssl_ctx);
+    }
+    cs_disconnect(&pipe);
+
+    if (status != OG_SUCCESS) {
+        MES_LOGGING(MES_LOGGING_CONNECT, "send scn fallback notify to %s failed", peer_url);
+        return OG_ERROR;
+    }
+    OG_LOG_RUN_INF("[mes] scn fallback notify sent to inst %u seed=%llu (%s)", dst_inst, (unsigned long long)seed_scn,
+        peer_url);
+    return OG_SUCCESS;
 }

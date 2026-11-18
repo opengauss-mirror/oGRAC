@@ -96,6 +96,10 @@ status_t cms_env_init(void);
 void cms_res_inst_register_upgrade(cms_upgrade_op_t upgrade_func);
 void CmsResInstRegisterWriteProtect(cms_write_protect_op_t writeProtectFunc);
 
+/* DB registers this to stop UB SCN (SIGBUS-like degrade) on cms stop-ub notify. */
+typedef void (*cms_xalarm_stop_ub_cb_t)(uint32 alarm_id, uint32 alarm_node_id);
+void cms_cli_set_xalarm_stop_ub_cb(cms_xalarm_stop_ub_cb_t cb);
+
 #ifdef __cplusplus
 }
 #endif
