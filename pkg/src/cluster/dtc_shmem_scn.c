@@ -1,31 +1,13 @@
-/* -------------------------------------------------------------------------
- *  This file is part of the oGRAC project.
- * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
- *
+/*
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * oGRAC is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
- *
  *          http://license.coscl.org.cn/MulanPSL2
- *
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
- * -------------------------------------------------------------------------
- *
- * dtc_shmem_scn.c
- *
- * Multi-node SCN slots:
- *   - _ENABLE_UBSMEM (any _ENABLE_SCN_UBSMEM): slot in GBP remote SGA
- *   - !_ENABLE_UBSMEM + _ENABLE_SCN_UBSMEM: dedicated per-node UB region
- * GET reads the local slot. SET fan-out raises peers to the caller's value.
- * INC raises the local slot to the max peer slot, then adds 1 and fan-out.
- *
- * IDENTIFICATION
- * src/cluster/dtc_shmem_scn.c
- *
- * -------------------------------------------------------------------------
  */
 #include "knl_cluster_module.h"
 #include "dtc_drc.h"
