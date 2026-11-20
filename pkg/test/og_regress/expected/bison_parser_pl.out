@@ -917,6 +917,24 @@ SQL> create or replace procedure bison_pl_noarg_proc as
 Succeed.
 
 SQL> 
+SQL> create or replace function bison_pl_current_user(current_user int) return int as begin return current_user + 1; end;
+  2 /
+
+Succeed.
+
+SQL> select bison_pl_current_user(1) as result from sys_dummy;
+
+RESULT
+------------
+2
+
+1 rows fetched.
+
+SQL> drop function bison_pl_current_user;
+
+Succeed.
+
+SQL>
 SQL> create or replace function bison_pl_func(p_id in int) return int as
   2 begin
   3     return p_id + 1;

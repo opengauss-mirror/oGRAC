@@ -751,6 +751,11 @@ begin
 end;
 /
 
+create or replace function bison_pl_current_user(current_user int) return int as begin return current_user + 1; end;
+/
+select bison_pl_current_user(1) as result from sys_dummy;
+drop function bison_pl_current_user;
+
 create or replace function bison_pl_func(p_id in int) return int as
 begin
     return p_id + 1;
