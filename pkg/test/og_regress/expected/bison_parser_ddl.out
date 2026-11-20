@@ -433,6 +433,61 @@ SQL> drop table if exists bison_ddl_part_tab;
 Succeed.
 
 SQL> 
+SQL> create table bison_step_bound(n int) partition by range(n) interval(4)
+  2 (partition p0 values less than (4),
+  3  partition p1 values less than (maxvalue));
+
+OG-00601, [3:32]Sql syntax error: Maxvalue partition cannot be specified for interval partitioned
+SQL> create table bison_step_copy partition by range(n) interval(4)
+  2 (partition p0 values less than (maxvalue)) as select 1 n from sys_dummy;
+
+OG-00601, [2:33]Sql syntax error: Maxvalue partition cannot be specified for interval partitioned
+SQL> select count(*) as remaining_tables from my_tables where table_name in ('BISON_STEP_BOUND','BISON_STEP_COPY');
+
+REMAINING_TABLES
+--------------------
+0
+
+1 rows fetched.
+
+SQL> create table bison_step_finite(n int, sub_key int) partition by range(n) interval(4)
+  2 subpartition by range(sub_key)
+  3 (partition p0 values less than (4) (subpartition sp0 values less than (maxvalue)));
+
+Succeed.
+
+SQL> insert into bison_step_finite values (1, 9), (7, 9);
+
+2 rows affected.
+
+SQL> select n from bison_step_finite order by n;
+
+N
+------------
+1
+7
+
+2 rows fetched.
+
+SQL> drop table bison_step_finite purge;
+
+Succeed.
+
+SQL>
+SQL> create table bison_date_bound(d date) partition by range(d) interval(numtodsinterval(1, 'DAY'))
+  2 (partition p0 values less than (cast(null as date))); --error
+
+OG-01103, [2:33]Invalid (sub)partition key, datetime interval partition bound cannot be NULL
+SQL> create table bison_date_bound partition by range(d) interval(numtodsinterval(1, 'DAY'))
+  2 (partition p0 values less than (date '2024-01-02')) as select date '2024-01-03' d from sys_dummy;
+
+Succeed.
+
+SQL> drop table bison_date_bound purge;
+
+Succeed.
+
+SQL>
 SQL> create table bison_ddl_hash_tab(id int, val int)
   2 partition by hash(id) partitions 4;
 
