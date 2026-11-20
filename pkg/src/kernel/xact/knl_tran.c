@@ -1855,20 +1855,20 @@ status_t tx_rollback_start(knl_session_t *session)
     knl_instance_t *kernel = session->kernel;
     undo_set_t *undo_set = MY_UNDO_SET(session);
     uint32 i;
-    // undoset and rb_ctx in undo_set is allocated in tx_area_init just before recovery
 
     for (i = 0; i < session->kernel->attr.tx_rollback_proc_num; i++) {
+        thread_t *thread = &kernel->tran_ctx.rollback_proc[i];
         undo_set->rb_ctx[i].session = kernel->sessions[SESSION_ID_ROLLBACK + i];
         undo_set->rb_ctx[i].inst_id = session->kernel->id;
         undo_set->rb_ctx[i].worker_id = i;
         undo_set->rb_ctx[i].deposit_rollback = OG_FALSE;
         undo_set->rb_ctx[i].active = OG_TRUE;
         undo_set->rb_ctx[i].rcy_item_count = 0;
-        if (cm_create_thread(tx_rollback_proc, 0, &undo_set->rb_ctx[i], &kernel->tran_ctx.rollback_proc[i]) !=
-            OG_SUCCESS) {
+        if (cm_create_thread(tx_rollback_proc, 0, &undo_set->rb_ctx[i], thread) != OG_SUCCESS) {
+            thread->id = 0;
             return OG_ERROR;
         }
-        undo_set->rb_ctx[i].thread = kernel->tran_ctx.rollback_proc[i];
+        undo_set->rb_ctx[i].thread = *thread;
     }
 
     return OG_SUCCESS;
@@ -1880,9 +1880,14 @@ void tx_rollback_close(knl_session_t *session)
     tx_area_t *ogx = &kernel->tran_ctx;
     undo_set_t *undo_set = MY_UNDO_SET(session);
 
-    for (uint32 i = 0; i < session->kernel->attr.tx_rollback_proc_num; i++) {
+    for (uint32 i = 0; i < OG_MAX_ROLLBACK_PROC; i++) {
+        thread_t *thread = &ogx->rollback_proc[i];
+        if (thread->id == 0) {
+            continue;
+        }
         knl_panic(undo_set->rb_ctx[i].session == kernel->sessions[SESSION_ID_ROLLBACK + i]);
-        cm_close_thread(&ogx->rollback_proc[i]);
+        cm_close_thread(thread);
+        thread->id = 0;
     }
 
     /* Consistent with dtc_rollback_close: leftover set count must not block shutdown */
@@ -1940,15 +1945,10 @@ void tx_shutdown(knl_session_t *session)
 {
     for (uint8 id = 0; id < OG_MAX_INSTANCES; id++) {
         undo_set_t *undo_set = UNDO_SET(session, id);
-        if (undo_set->assign_workers == 0) {
-            continue;
-        }
-
         if (id == session->kernel->id) {
-            /* release local transaction area */
+            /* Local rollback threads start before tx_area_init sets assign_workers. */
             tx_rollback_close(session);
-        } else {
-            /* release deposit transaction area */
+        } else if (undo_set->assign_workers != 0) {
             dtc_rollback_close(session, id);
         }
     }
