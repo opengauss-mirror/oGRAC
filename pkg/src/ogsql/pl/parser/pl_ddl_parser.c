@@ -1030,7 +1030,7 @@ status_t pl_bison_prepare_create(sql_stmt_t *stmt, bool32 replace, bool32 if_not
     return OG_SUCCESS;
 }
 
-static void pl_bison_wrap_create_error(sql_stmt_t *stmt, pl_entity_t *pl_ctx, const error_info_t *error)
+static void pl_bison_wrap_object_error(sql_stmt_t *stmt, pl_entity_t *pl_ctx, const error_info_t *error)
 {
     cm_reset_error();
     set_inter_plc_cnt();
@@ -1078,7 +1078,7 @@ status_t pl_bison_finish_invalid_create(sql_stmt_t *stmt)
     OG_RETURN_IFERR(pl_record_source(stmt, pl_ctx, &source));
     stmt->pl_failed = OG_TRUE;
     pl_ctx->create_def->compl_result = OG_FALSE;
-    pl_bison_wrap_create_error(stmt, pl_ctx, &error);
+    pl_bison_wrap_object_error(stmt, pl_ctx, &error);
     return OG_SUCCESS;
 }
 
@@ -1189,6 +1189,19 @@ static void pl_bison_init_object_word(pl_entity_t *entity, word_t *word)
     word->loc.column = 1;
 }
 
+static void pl_bison_wrap_stored_setup_error(sql_stmt_t *stmt, pl_entity_t *entity)
+{
+    if (g_tls_plc_error.plc_cnt == 0) {
+        error_info_t error = *cm_error_info();
+        pl_bison_wrap_object_error(stmt, entity, &error);
+        return;
+    }
+    /* The parent captured the error text. The reload already saved its start position. */
+    set_inter_plc_cnt();
+    plc_set_compiling_errors(stmt, &entity->def);
+    reset_inter_plc_cnt();
+}
+
 static status_t pl_bison_compile_stored_native_body(sql_stmt_t *stmt, text_t *body)
 {
     pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
@@ -1196,15 +1209,25 @@ static status_t pl_bison_compile_stored_native_body(sql_stmt_t *stmt, text_t *bo
     word_t word = { 0 };
     sql_text_t body_text = { 0 };
     status_t status;
+    bool32 had_parse_frame;
 
     pl_bison_init_object_word(entity, &word);
     pl_prepare_compile_desc(&desc, stmt, &entity->def, entity->pl_type);
     pl_bison_init_sql_text(body, &body_text);
 
     OG_RETURN_IFERR(lex_push(stmt->session->lex, &body_text));
+    /* The package/type compiler opens its own frame at the same nesting level. */
+    had_parse_frame = pl_bison_take_stored_error_frame(stmt);
+    if (had_parse_frame) {
+        reset_inter_plc_cnt();
+        plc_reset_tls_plc_error();
+    }
     status = plc_compile(stmt, &desc, &word);
     lex_pop(stmt->session->lex);
     if (status != OG_SUCCESS) {
+        if (had_parse_frame && cm_get_error_code() != ERR_PL_COMP_FMT) {
+            pl_bison_wrap_stored_setup_error(stmt, entity);
+        }
         return OG_ERROR;
     }
     if (g_tls_plc_error.plc_cnt == 0) {
