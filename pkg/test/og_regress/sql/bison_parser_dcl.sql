@@ -123,6 +123,13 @@ drop role bison_dcl_issue270_role;
 create role bison_dcl_issue270_role;
 create table bison_dcl_issue270_basic(id number, name varchar2(50));
 grant all on bison_dcl_issue270_basic to bison_dcl_issue270_role;
+revoke all privileges on bison_dcl_issue270_basic from bison_dcl_issue270_role;
+grant all on bison_dcl_issue270_basic to bison_dcl_issue270_role;
+revoke all on bison_dcl_issue270_basic from bison_dcl_issue270_role;
+grant all on bison_dcl_issue270_basic to bison_dcl_issue270_role;
+revoke all on table bison_dcl_issue270_basic from bison_dcl_issue270_role;
+grant all on bison_dcl_issue270_basic to bison_dcl_issue270_role;
+revoke all privileges on table bison_dcl_issue270_basic from bison_dcl_issue270_role;
 drop table bison_dcl_issue270_basic;
 drop role bison_dcl_issue270_role;
 
