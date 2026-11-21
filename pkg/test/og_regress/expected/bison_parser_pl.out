@@ -4791,10 +4791,62 @@ SQL> drop table if exists BISON_LOC_P2_T;
 
 Succeed.
 
+SQL> -- OPEN FOR (SELECT ...) is static SQL. One parenthesis pair is not part of the query.
+SQL> set serveroutput on;
+
+ON
+SQL> declare
+  2     c sys_refcursor;
+  3     n int;
+  4     sql_text varchar2(200);
+  5 begin
+  6     open c for (select /*+partition_parallel(partition,4,16)*/ 41 as n from sys_dummy);
+  7     fetch c into n;
+  8     close c;
+  9     dbe_output.print_line(n);
+ 10     open c for (select abs(7) + count(*) from (select 1 as n from sys_dummy) s);
+ 11     fetch c into n;
+ 12     close c;
+ 13     dbe_output.print_line(n);
+ 14     open c for select 42 as n from sys_dummy;
+ 15     fetch c into n;
+ 16     close c;
+ 17     dbe_output.print_line(n);
+ 18     sql_text := 'select 43 as n from sys_dummy';
+ 19     open c for sql_text;
+ 20     fetch c into n;
+ 21     close c;
+ 22     dbe_output.print_line(n);
+ 23     open c for (sql_text);
+ 24     fetch c into n;
+ 25     close c;
+ 26     dbe_output.print_line(n);
+ 27     open c for 'select :1 as n from sys_dummy' using 45;
+ 28     fetch c into n;
+ 29     close c;
+ 30     dbe_output.print_line(n);
+ 31     sql_text := 'select :1 as n from sys_dummy';
+ 32     open c for (sql_text) using 46;
+ 33     fetch c into n;
+ 34     close c;
+ 35     dbe_output.print_line(n);
+ 36 end;
+ 37 /
+
+41
+8
+42
+43
+43
+45
+46
+
+PL/SQL procedure successfully completed.
+
 SQL> set serveroutput off;
 
 OFF
-SQL>
+SQL> 
 SQL> alter system set use_bison_parser = false;
 
 Succeed.
