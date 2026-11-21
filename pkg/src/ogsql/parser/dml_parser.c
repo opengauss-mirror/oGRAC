@@ -1305,6 +1305,7 @@ static inline void raw_parser_init_extra(base_yy_extra_type *yyextra, const sql_
     state->sourcebuf = sql->str;
     state->sourcebuflen = sql->len;
     state->pending_pl_source = pl_source;
+    state->in_view_query = OG_FALSE;
     state->pl_object_name_end = -1;
     state->pl_object_name_mode = OG_FALSE;
     state->pl_object_name_part_complete = OG_FALSE;

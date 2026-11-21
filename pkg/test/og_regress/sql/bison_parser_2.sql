@@ -199,6 +199,16 @@ drop table if exists t_view2;
 create table t_view2(id int, name varchar(100), age int);
 drop view if exists view_complex;
 create view view_complex as select id, name from t_view2 where age > 18;
+insert into t_view2(id,age) values (12,21);
+create view view_lock_direct as select id from t_view2 for update;
+create or replace force view view_complex(id) as select id+1 from t_view2 for update of id wait 1;
+create view view_lock_nested as select id from (select id from t_view2 for update nowait) s;
+select count(*) as created_views from my_views where view_name in ('VIEW_LOCK_DIRECT','VIEW_LOCK_NESTED');
+select id from view_complex;
+select id from t_view2 for update skip locked;
+rollback;
+drop view if exists view_lock_nested;
+drop view if exists view_lock_direct;
 drop view if exists view_complex;
 drop table if exists t_view2;
 

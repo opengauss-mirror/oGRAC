@@ -91,6 +91,7 @@ typedef struct st_base_yy_raw_parse_state {
     size_t sourcebuflen;
 
     bool32 pending_pl_source;
+    bool32 in_view_query;
 
     int pl_object_name_end;
     bool32 pl_object_name_mode;
