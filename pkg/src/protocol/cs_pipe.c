@@ -23,6 +23,7 @@
  * -------------------------------------------------------------------------
  */
 #include "cs_pipe.h"
+#include "cm_date.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -682,7 +683,9 @@ status_t cs_write_stream_timeout(cs_pipe_t *pipe, const char *buf, uint32 size, 
     return OG_SUCCESS;
 }
 
-status_t cs_read_stream(cs_pipe_t *pipe, char *buf, uint32 timeout, uint32 max_size, int32 *size)
+#define CS_STREAM_CANCEL_WAIT_MS 50
+static status_t cs_read_stream_core(cs_pipe_t *pipe, char *buf, uint32 timeout, uint32 max_size, int32 *size,
+    cs_stream_cancel_func cancel, void *cancel_arg)
 {
     bool32 ready = OG_FALSE;
     uint32 read_size;
@@ -690,12 +693,20 @@ status_t cs_read_stream(cs_pipe_t *pipe, char *buf, uint32 timeout, uint32 max_s
     uint32 new_timeout;
     uint32 retry_count;
     uint32 wait_event = 0;
+    int64 deadline = 0;
     CM_POINTER2(pipe, buf);
 
     read_size = 0;
     recv_size = 0;
     retry_count = 0;
     new_timeout = timeout;
+
+    if (cancel != NULL) {
+        deadline = cm_monotonic_now() + (int64)timeout * MICROSECS_PER_MILLISEC;
+        if (cancel(cancel_arg)) {
+            return OG_ERROR;
+        }
+    }
 
     if (pipe->type == CS_TYPE_SSL) {
         if (VIO_RECV(pipe, buf, max_size, (int32 *)&recv_size, &wait_event) != OG_SUCCESS) {
@@ -705,10 +716,27 @@ status_t cs_read_stream(cs_pipe_t *pipe, char *buf, uint32 timeout, uint32 max_s
     }
     wait_event = (wait_event == 0) ? CS_WAIT_FOR_READ : wait_event;
     while (read_size < max_size) {
+        if (cancel != NULL) {
+            int64 remaining = deadline - cm_monotonic_now();
+            if (cancel(cancel_arg)) {
+                return OG_ERROR;
+            }
+            if (remaining <= 0) {
+                OG_THROW_ERROR(ERR_TCP_TIMEOUT, "receive data");
+                return OG_ERROR;
+            }
+            new_timeout = (uint32)MIN((remaining + 999) / 1000, CS_STREAM_CANCEL_WAIT_MS);
+        }
         if (VIO_WAIT(pipe, wait_event, new_timeout, &ready) != OG_SUCCESS) {
             return OG_ERROR;
         }
+        if (cancel != NULL && cancel(cancel_arg)) {
+            return OG_ERROR;
+        }
         if (!ready) {
+            if (cancel != NULL) {
+                continue;
+            }
             // Already received part of message, need to receive the rest.
             if (read_size > 0) {
                 retry_count++;
@@ -734,6 +762,21 @@ status_t cs_read_stream(cs_pipe_t *pipe, char *buf, uint32 timeout, uint32 max_s
     (*size) = read_size;
 
     return OG_SUCCESS;
+}
+
+status_t cs_read_stream(cs_pipe_t *pipe, char *buf, uint32 timeout, uint32 max_size, int32 *size)
+{
+    return cs_read_stream_core(pipe, buf, timeout, max_size, size, NULL, NULL);
+}
+
+status_t cs_read_stream_cancelable(cs_pipe_t *pipe, char *buf, uint32 timeout, uint32 max_size, int32 *size,
+    cs_stream_cancel_func cancel, void *cancel_arg)
+{
+    if (cancel == NULL) {
+        OG_THROW_ERROR(ERR_CLT_INVALID_VALUE, "cancel callback", 0);
+        return OG_ERROR;
+    }
+    return cs_read_stream_core(pipe, buf, timeout, max_size, size, cancel, cancel_arg);
 }
 
 status_t cs_ssl_accept(ssl_ctx_t *fd, cs_pipe_t *pipe)

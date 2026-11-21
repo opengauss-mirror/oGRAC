@@ -87,6 +87,7 @@ typedef struct st_link_ready_ack {
 extern const text_t g_pipe_type_names[CS_TYPE_CEIL];
 
 typedef bool32 (*check_inst_alive_func)(uint32_t dst_id);
+typedef bool32 (*cs_stream_cancel_func)(void *arg);
 
 status_t cs_connect(const char *url, cs_pipe_t *pipe, const char *bind_host,
                     const char *server_path, const char *client_path);
@@ -102,6 +103,9 @@ EXTER_ATTACK status_t cs_write_stream(cs_pipe_t *pipe, const char *buf, uint32 s
 EXTER_ATTACK status_t cs_write_stream_timeout(cs_pipe_t *pipe, const char *buf, uint32 size, int32 max_pkg_size,
                                               uint32 timeout);
 EXTER_ATTACK status_t cs_read_stream(cs_pipe_t *pipe, char *buf, uint32 timeout, uint32 max_size, int32 *size);
+/* Exact read with a total timeout and cancellation checks during sliced waits. */
+EXTER_ATTACK status_t cs_read_stream_cancelable(cs_pipe_t *pipe, char *buf, uint32 timeout, uint32 max_size,
+                                               int32 *size, cs_stream_cancel_func cancel, void *cancel_arg);
 EXTER_ATTACK status_t cs_send_bytes(cs_pipe_t *pipe, const char *buf, uint32 size);
 EXTER_ATTACK status_t cs_write(cs_pipe_t *pipe, cs_packet_t *pack);
 socket_t cs_get_socket_fd(cs_pipe_t *pipe);

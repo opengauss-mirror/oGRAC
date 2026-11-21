@@ -1699,6 +1699,18 @@ static status_t rbp_knl_wait_response(cs_pipe_t *pipe, char *resp_buf, int32 buf
     return OG_SUCCESS;
 }
 
+/* The DTC epoch remains active through verification and temporary pipe close.
+ * PAGE_WRITE suspension also covers analysis/prepare before that epoch. */
+static bool32 rbp_heartbeat_should_yield(void *arg)
+{
+    knl_session_t *session = (knl_session_t *)arg;
+    rbp_context_t *ctx = &session->kernel->rbp_context;
+
+    CM_MFENCE;
+    return (bool32)(session->killed || KNL_RBP_OFF_TRIGGERED(session->kernel) ||
+        ctx->page_write_suspended || ctx->dtc_read_active || KNL_RECOVERY_WITH_RBP(session->kernel));
+}
+
 static status_t rbp_notify_msg(knl_session_t *session, rbp_notify_msg_e msg, uint32 rbp_proc_id, rbp_msg_ack_t *ack)
 {
     rbp_context_t *rbp_context = &session->kernel->rbp_context;
@@ -1727,6 +1739,18 @@ static status_t rbp_notify_msg(knl_session_t *session, rbp_notify_msg_e msg, uin
     /* Demo / real RBP always sends rbp_msg_ack_t for NOTIFY; must drain or the next PAGE_READ wait sees 8-byte body. */
     rbp_msg_ack_t discard;
     rbp_msg_ack_t *response = (ack != NULL) ? ack : &discard;
+    if (msg == MSG_RBP_HEART_BEAT) {
+        int32 received = 0;
+        if (cs_read_stream_cancelable(pipe, (char *)response, RBP_MAX_READ_WAIT_TIME, sizeof(*response), &received,
+            rbp_heartbeat_should_yield, session) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+        if (received != (int32)sizeof(*response) || response->header.msg_length != sizeof(*response)) {
+            OG_LOG_RUN_ERR("[RBP] invalid heartbeat ACK: received=%d length=%u", received, response->header.msg_length);
+            return OG_ERROR;
+        }
+        return OG_SUCCESS;
+    }
     if (rbp_knl_wait_response(pipe, (char *)response, sizeof(rbp_msg_ack_t)) != OG_SUCCESS) {
         return OG_ERROR;
     }
@@ -1745,7 +1769,7 @@ static void rbp_timed_heart_beat(knl_session_t *session)
     uint32 rbp_proc_id = session->rbp_queue_index - 1;
     rbp_buf_manager_t *rbp_buf_manager = &rbp_context->rbp_buf_manager[rbp_proc_id];
 
-    if (!KNL_RBP_ENABLE(session->kernel) || !rbp_buf_manager->is_connected) {
+    if (!KNL_RBP_ENABLE(session->kernel) || !rbp_buf_manager->is_connected || rbp_heartbeat_should_yield(session)) {
         return;
     }
 
@@ -1754,11 +1778,20 @@ static void rbp_timed_heart_beat(knl_session_t *session)
     }
 
     cm_spin_lock(&rbp_buf_manager->fisrt_pipe_lock, NULL);
+    if (!rbp_buf_manager->is_connected || rbp_heartbeat_should_yield(session)) {
+        cm_spin_unlock(&rbp_buf_manager->fisrt_pipe_lock);
+        return;
+    }
     if (rbp_notify_msg(session, MSG_RBP_HEART_BEAT, rbp_proc_id, NULL) != OG_SUCCESS) {
-        rbp_buf_manager->is_connected = OG_FALSE;
         rbp_context->queue[rbp_proc_id].has_gap = OG_TRUE;
+        /* A canceled request may leave an ACK pending: never reuse that stream.
+         * Close before publishing disconnected so the agent cannot race this close. */
         cs_disconnect(&rbp_buf_manager->pipe_const);
-        if (rbp_rate_loggable(&g_rbp_heartbeat_fail_last_log[rbp_proc_id % OG_RBP_SESSION_COUNT], g_timer()->now,
+        CM_MFENCE;
+        rbp_buf_manager->is_connected = OG_FALSE;
+        if (rbp_heartbeat_should_yield(session)) {
+            OG_LOG_RUN_INF("[RBP] heartbeat interrupted for recovery/stop: queue=%u", rbp_proc_id);
+        } else if (rbp_rate_loggable(&g_rbp_heartbeat_fail_last_log[rbp_proc_id % OG_RBP_SESSION_COUNT], g_timer()->now,
                               RBP_PAGE_WRITE_LOG_INTERVAL_US)) {
             OG_LOG_RUN_ERR("[RBP] heart beat with rbp failed, disconnect and require PAGE_WRITE reset: queue=%u",
                            rbp_proc_id);
