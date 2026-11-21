@@ -395,7 +395,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 %type <pivot_item> pivot_clause
 %type <expr_alias_as> unpivot_in_list_element
 %type <swcb> start_with_clause
-%type <for_update> for_locking_clause
+%type <for_update> for_locking_clause for_locking_head
 %type <rowmark_type> opt_nowait_or_skip
 %type <merge_when> merge_when_list
 %type <name_owner> any_name on_list pl_object_name pl_trigger_table_name
@@ -2091,29 +2091,35 @@ locked_rels_list:
             | /* EMPTY */                       { $$ = NULL; }
         ;
 
-for_locking_clause:
-            FOR UPDATE locked_rels_list opt_wait
+for_locking_head:
+            FOR UPDATE locked_rels_list
                 {
+                    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+                    if (extra->raw_parse.in_view_query) {
+                        OG_SRC_THROW_ERROR(@1.loc, ERR_FOR_UPDATE_NOT_ALLOWED);
+                        YYABORT;
+                    }
                     for_update_clause *for_update = NULL;
-                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
+                    if (sql_alloc_mem(extra->core_yy_extra.stmt->context,
                         sizeof(for_update_clause), (void **)&for_update) != OG_SUCCESS) {
                         parser_abort_or_yyerror("alloc mem failed");
                     }
                     for_update->for_update_cols = $3;
-                    for_update->for_update_params.type = ROWMARK_WAIT_SECOND;
-                    for_update->for_update_params.wait_seconds = $4;
                     $$ = for_update;
                 }
-            | FOR UPDATE locked_rels_list opt_nowait_or_skip
+        ;
+
+for_locking_clause:
+            for_locking_head opt_wait
                 {
-                    for_update_clause *for_update = NULL;
-                    if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context,
-                        sizeof(for_update_clause), (void **)&for_update) != OG_SUCCESS) {
-                        parser_abort_or_yyerror("alloc mem failed");
-                    }
-                    for_update->for_update_cols = $3;
-                    for_update->for_update_params.type = $4;
-                    $$ = for_update;
+                    $1->for_update_params.type = ROWMARK_WAIT_SECOND;
+                    $1->for_update_params.wait_seconds = $2;
+                    $$ = $1;
+                }
+            | for_locking_head opt_nowait_or_skip
+                {
+                    $1->for_update_params.type = $2;
+                    $$ = $1;
                 }
         ;
 
@@ -11578,7 +11584,7 @@ view_column_list:
         ;
 
 CreateViewStmt:
-            CREATE opt_or_replace opt_force VIEW any_name opt_view_column_list opt_with_read_only AS SelectStmt
+            CREATE opt_or_replace opt_force VIEW any_name opt_view_column_list opt_with_read_only view_query_as SelectStmt
                 {
                     knl_view_def_t *def = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -11591,6 +11597,10 @@ CreateViewStmt:
                     }
                     $$ = def;
                 }
+        ;
+
+view_query_as:
+            AS { og_yyget_extra(yyscanner)->raw_parse.in_view_query = OG_TRUE; }
         ;
 
 opt_with_read_only:

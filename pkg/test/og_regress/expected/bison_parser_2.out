@@ -579,6 +579,55 @@ SQL> create view view_complex as select id, name from t_view2 where age > 18;
 
 Succeed.
 
+SQL> insert into t_view2(id,age) values (12,21);
+
+1 rows affected.
+
+SQL> create view view_lock_direct as select id from t_view2 for update;
+
+OG-01361, [1:56]FOR UPDATE is not allowed in this query expression
+SQL> create or replace force view view_complex(id) as select id+1 from t_view2 for update of id wait 1;
+
+OG-01361, [1:75]FOR UPDATE is not allowed in this query expression
+SQL> create view view_lock_nested as select id from (select id from t_view2 for update nowait) s;
+
+OG-01361, [1:72]FOR UPDATE is not allowed in this query expression
+SQL> select count(*) as created_views from my_views where view_name in ('VIEW_LOCK_DIRECT','VIEW_LOCK_NESTED');
+
+CREATED_VIEWS
+--------------------
+0
+
+1 rows fetched.
+
+SQL> select id from view_complex;
+
+ID
+------------
+12
+
+1 rows fetched.
+
+SQL> select id from t_view2 for update skip locked;
+
+ID
+------------
+12
+
+1 rows fetched.
+
+SQL> rollback;
+
+Succeed.
+
+SQL> drop view if exists view_lock_nested;
+
+Succeed.
+
+SQL> drop view if exists view_lock_direct;
+
+Succeed.
+
 SQL> drop view if exists view_complex;
 
 Succeed.
