@@ -29,7 +29,6 @@
 #include "expl_plan.h"
 #include "expl_executor.h"
 
-#define EXPL_FMT_ALIGN_SIZE 3  // eg. "ID | Operation | ..."
 #define EXPL_FMT_COL_OFFSET 2  // eg. '| '
 #define EXPLAIN_PREDICATE_HEAD "Predicate Information (identified by id):"
 
@@ -111,25 +110,6 @@ static status_t expl_send_explain_data(sql_stmt_t *statement,
     } else {
         return expl_send_explain_row(statement, cursor, row_buf, info, is_full);
     }
-}
-
-static uint32 expl_get_explain_width(expl_helper_t *helper)
-{
-    uint32 width = 1;
-    uint32 i = 0;
-    while (i < EXPL_COL_TYPE_MAX) {
-        if (OG_BIT_TEST(helper->display_option, OG_GET_MASK(i))) {
-            width += helper->fmt_sizes[i] + EXPL_FMT_ALIGN_SIZE;
-            i++;
-        }
-    }
-
-    if (width > OG_MAX_ROW_SIZE - 1) {
-        width = OG_MAX_ROW_SIZE - 1;
-    }
-    helper->width = width;
-
-    return width;
 }
 
 static status_t expl_send_explain_divider(sql_stmt_t *statement, sql_cursor_t *cursor, uint32 width, bool32 *is_full,

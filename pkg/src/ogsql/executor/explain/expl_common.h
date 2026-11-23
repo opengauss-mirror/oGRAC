@@ -130,4 +130,18 @@ typedef struct st_expl_helper {
     bool32 first_fetch;
 } expl_helper_t;
 
+#define EXPL_FMT_ALIGN_SIZE 3  // two spaces and a column separator
+
+static inline uint32 expl_get_explain_width(expl_helper_t *helper)
+{
+    uint32 width = 1;
+    for (uint32 i = 0; i < EXPL_COL_TYPE_MAX; i++) {
+        if (OG_BIT_TEST(helper->display_option, OG_GET_MASK(i))) {
+            width += helper->fmt_sizes[i] + EXPL_FMT_ALIGN_SIZE;
+        }
+    }
+    helper->width = MIN(width, OG_MAX_ROW_SIZE - 1);
+    return helper->width;
+}
+
 #endif
