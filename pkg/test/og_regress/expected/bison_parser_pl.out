@@ -4142,6 +4142,104 @@ SQL> DECLARE
 PL/SQL procedure successfully completed.
 
 SQL> 
+SQL> CREATE OR REPLACE PROCEDURE BISON_DIAG_LEAF AS n INT;
+  2 BEGIN
+  3     SELECT COUNT(*) INTO n FROM qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq;
+  4 END;
+  5 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_LEAF) terminated with compiling errors
+[3:33] PLC-00601 Sql syntax error: identifier is too long
+
+
+SQL> CREATE OR REPLACE PROCEDURE BISON_DIAG_CALLER AS
+  2 BEGIN
+  3     BISON_DIAG_LEAF();
+  4 END;
+  5 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_CALLER) terminated with compiling errors
+[3:5] PLC-00944 PL/SQL(SYS.BISON_DIAG_LEAF) terminated with compiling errors
+[3:33] PLC-00601 Sql syntax error: identifier is too long
+
+
+
+SQL> CALL BISON_DIAG_CALLER();
+
+OG-00944, PL/SQL(SYS.ANONYMOUS BLOCK) terminated with compiling errors
+[1:6] PLC-00944 PL/SQL(SYS.BISON_DIAG_CALLER) terminated with compiling errors
+[3:5] PLC-00944 PL/SQL(SYS.BISON_DIAG_LEAF) terminated with compiling errors
+[3:33] PLC-00601 Sql syntax error: identifier is too long
+
+
+
+
+SQL> DROP PROCEDURE BISON_DIAG_CALLER;
+
+Succeed.
+
+SQL> DROP PROCEDURE BISON_DIAG_LEAF;
+
+Succeed.
+
+SQL>
+SQL> CREATE OR REPLACE PACKAGE BISON_DIAG_PKG AS
+  2     PROCEDURE p;
+  3 END;
+  4 /
+
+Succeed.
+
+SQL> CREATE OR REPLACE PACKAGE BODY BISON_DIAG_PKG AS
+  2     PROCEDURE p AS n INT;
+  3     BEGIN
+  4         SELECT COUNT(*) INTO n FROM BISON_DIAG_PKG_T;
+  5     END;
+  6 END;
+  7 /
+
+Succeed.
+Warning:
+PL/SQL(SYS.BISON_DIAG_PKG) terminated with compiling errors
+[2:17] PLC-00944 PL/SQL(SYS.BISON_DIAG_PKG.P) terminated with compiling errors
+[4:30] PLC-00843 The table or view SYS.BISON_DIAG_PKG_T does not exist.
+
+
+
+SQL> CALL BISON_DIAG_PKG.p();
+
+OG-00932, [1:6] PL/SQL(SYS.ANONYMOUS BLOCK) terminated with execute errors
+[1:6] OG-00944, PL/SQL(SYS.BISON_DIAG_PKG) terminated with compiling errors
+[2:17] PLC-00944 PL/SQL(SYS.BISON_DIAG_PKG.P) terminated with compiling errors
+[4:30] PLC-00843 The table or view SYS.BISON_DIAG_PKG_T does not exist.
+
+
+
+SQL> CREATE TABLE BISON_DIAG_PKG_T(n INT);
+
+Succeed.
+
+SQL> CALL BISON_DIAG_PKG.p();
+
+PL/SQL procedure successfully completed.
+
+SQL> DROP PACKAGE BODY BISON_DIAG_PKG;
+
+Succeed.
+
+SQL> DROP PACKAGE BISON_DIAG_PKG;
+
+Succeed.
+
+SQL> DROP TABLE BISON_DIAG_PKG_T;
+
+Succeed.
+
+SQL>
 SQL> -- Exercise Bison source locations and parameter mappings with isolated objects.
 SQL> drop trigger if exists BISON_LOC_P2_TRG_EXPR;
 

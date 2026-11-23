@@ -25,6 +25,7 @@
 #include "pl_compiler.h"
 #include "srv_instance.h"
 #include "pl_ddl_parser.h"
+#include "dml_parser.h"
 #include "ogsql_dependency.h"
 #include "pl_memory.h"
 #include "pl_common.h"
@@ -1932,8 +1933,10 @@ status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, t
         }
     }
 
-    set_inter_plc_cnt();
-    plc_set_tls_plc_error();
+    if (!pl_bison_take_stored_error_frame(stmt)) {
+        set_inter_plc_cnt();
+        plc_set_tls_plc_error();
+    }
 
     switch (desc->type) {
         case PL_FUNCTION:
@@ -1954,10 +1957,11 @@ status_t plc_bison_compile(sql_stmt_t *stmt, plc_desc_t *desc, galist_t *args, t
             break;
     }
 
+    if (status == OG_SUCCESS) {
+        status = sql_append_references(&entity->ref_list, stmt->context);
+    }
     if (status != OG_SUCCESS) {
         plc_set_compiling_errors(stmt, obj);
-    } else {
-        status = sql_append_references(&entity->ref_list, stmt->context);
     }
 
     if (compiler.obj != NULL) {

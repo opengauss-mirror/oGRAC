@@ -84,6 +84,7 @@ void sql_prepare_context_ctrl(sql_stmt_t *stmt, uint32 hash_value, context_bucke
 void sql_parse_set_context_procinfo(sql_stmt_t *stmt);
 uint32 sql_has_special_word(sql_stmt_t *stmt, text_t *sql_text);
 status_t raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context);
+bool32 pl_bison_take_stored_error_frame(sql_stmt_t *stmt);
 /* Bison entry for catalog PL source fragments with a prepared PL entity. */
 status_t raw_parser_pl_source(sql_stmt_t *stmt, sql_text_t *sql, void **context);
 

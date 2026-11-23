@@ -58,6 +58,7 @@ extern "C" {
 
 static __thread bison_source_scope_t *g_bison_source_scope = NULL;
 static __thread core_yyscan_t g_bison_alloc_scanner = NULL;
+static __thread sql_stmt_t *g_bison_stored_error_owner = NULL;
 
 core_yyscan_t bison_parser_set_alloc_scanner(core_yyscan_t scanner)
 {
@@ -1490,13 +1491,39 @@ status_t raw_parser(sql_stmt_t *stmt, sql_text_t *sql, void **context)
     return raw_parser_internal(stmt, sql, context, OG_FALSE);
 }
 
+bool32 pl_bison_take_stored_error_frame(sql_stmt_t *stmt)
+{
+    if (g_bison_stored_error_owner != stmt) {
+        return OG_FALSE;
+    }
+    g_bison_stored_error_owner = NULL;
+    return OG_TRUE;
+}
+
 status_t raw_parser_pl_source(sql_stmt_t *stmt, sql_text_t *sql, void **context)
 {
-    if (stmt->pl_context == NULL) {
+    pl_entity_t *entity = (pl_entity_t *)stmt->pl_context;
+    sql_stmt_t *outer_owner = g_bison_stored_error_owner;
+    status_t status;
+
+    if (entity == NULL) {
         OG_SRC_THROW_ERROR(sql->loc, ERR_SQL_SYNTAX_ERROR, "PL compilation context expected");
         return OG_ERROR;
     }
-    return raw_parser_internal(stmt, sql, context, OG_TRUE);
+    /* The outer grammar can fail before the body compiler takes this object's frame. */
+    g_bison_stored_error_owner = stmt;
+    set_inter_plc_cnt();
+    plc_set_tls_plc_error();
+    status = raw_parser_internal(stmt, sql, context, OG_TRUE);
+    if (g_bison_stored_error_owner == stmt) {
+        if (status != OG_SUCCESS) {
+            plc_set_compiling_errors(stmt, &entity->def);
+        }
+        reset_inter_plc_cnt();
+        plc_reset_tls_plc_error();
+    }
+    g_bison_stored_error_owner = outer_owner;
+    return status;
 }
 
 static status_t sql_create_dml_context(sql_stmt_t *stmt, sql_text_t *sql, key_wid_t key_wid)
