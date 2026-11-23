@@ -2759,6 +2759,7 @@ static status_t og_try_parse_interval(sql_stmt_t *stmt, knl_part_obj_def_t *obj_
     }
 
     OG_RETURN_IFERR(sql_alloc_mem(stmt->context, OG_MAX_COLUMN_SIZE, (pointer_t *)&interval_key));
+    obj_def->is_interval = OG_TRUE;
     obj_def->interval = interval->interval_text;
     OG_RETURN_IFERR(og_parse_interval_key(stmt, interval_key, obj_def, interval->expr));
 
@@ -2959,7 +2960,7 @@ static status_t og_parse_range_values(sql_stmt_t *stmt, knl_part_def_t *part_def
         if (value_expr->root->type == EXPR_NODE_COLUMN &&
             cm_compare_text_str_ins(&value_expr->root->word.column.name.value, PART_VALUE_MAX) == 0) {
             if ((obj_def->is_interval) && parent_def == NULL) {
-                OG_SRC_THROW_ERROR_EX(value_expr->loc, ERR_SQL_SYNTAX_ERROR,
+                OG_SRC_THROW_ERROR_EX(TREE_LOC(value_expr), ERR_SQL_SYNTAX_ERROR,
                     "Maxvalue partition cannot be specified for interval partitioned");
                 return OG_ERROR;
             }
@@ -2968,6 +2969,11 @@ static status_t og_parse_range_values(sql_stmt_t *stmt, knl_part_def_t *part_def
             key = cm_galist_get(tmp_part_keys, i);
             OG_RETURN_IFERR(sql_verify_expr(&verf, value_expr));
             OG_RETURN_IFERR(sql_exec_expr(stmt, value_expr, &value));
+            if (value.is_null && obj_def->is_interval && parent_def == NULL && OG_IS_DATETIME_TYPE(key->datatype)) {
+                OG_SRC_THROW_ERROR(TREE_LOC(value_expr), ERR_INVALID_PART_KEY,
+                    "datetime interval partition bound cannot be NULL");
+                return OG_ERROR;
+            }
             OG_RETURN_IFERR(sql_part_put_key(stmt, &value, key->datatype, key->size, key->is_char, key->precision,
                 key->scale, part_def->partkey));
         }

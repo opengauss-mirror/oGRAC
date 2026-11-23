@@ -121,6 +121,25 @@ alter table bison_ddl_part_tab split partition p2 at(15) into (partition p2a, pa
 alter table bison_ddl_part_tab drop partition p2a;
 drop table if exists bison_ddl_part_tab;
 
+create table bison_step_bound(n int) partition by range(n) interval(4)
+(partition p0 values less than (4),
+ partition p1 values less than (maxvalue));
+create table bison_step_copy partition by range(n) interval(4)
+(partition p0 values less than (maxvalue)) as select 1 n from sys_dummy;
+select count(*) as remaining_tables from my_tables where table_name in ('BISON_STEP_BOUND','BISON_STEP_COPY');
+create table bison_step_finite(n int, sub_key int) partition by range(n) interval(4)
+subpartition by range(sub_key)
+(partition p0 values less than (4) (subpartition sp0 values less than (maxvalue)));
+insert into bison_step_finite values (1, 9), (7, 9);
+select n from bison_step_finite order by n;
+drop table bison_step_finite purge;
+
+create table bison_date_bound(d date) partition by range(d) interval(numtodsinterval(1, 'DAY'))
+(partition p0 values less than (cast(null as date))); --error
+create table bison_date_bound partition by range(d) interval(numtodsinterval(1, 'DAY'))
+(partition p0 values less than (date '2024-01-02')) as select date '2024-01-03' d from sys_dummy;
+drop table bison_date_bound purge;
+
 create table bison_ddl_hash_tab(id int, val int)
 partition by hash(id) partitions 4;
 alter table bison_ddl_hash_tab coalesce partition;
