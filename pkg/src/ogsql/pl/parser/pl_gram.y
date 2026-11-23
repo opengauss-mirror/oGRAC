@@ -3842,6 +3842,45 @@ static bool32 pl_bison_next_word_is(text_t *src, uint32 *pos, const char *word)
     return OG_TRUE;
 }
 
+/* Scan Bison SQL for local temporary table identifiers. */
+static status_t pl_bison_scan_sql(sql_stmt_t *stmt, text_t *src, source_location_t loc, bool32 *has_ltt)
+{
+    base_yy_extra_type yyextra = { 0 };
+    core_YYSTYPE token_value;
+    YYLTYPE token_loc;
+    core_yyscan_t scanner;
+    sql_text_t sql_text = { 0 };
+    sql_text_t parser_text_bak = stmt->parser_text;
+    bool32 parser_text_valid_bak = stmt->parser_text_valid;
+    status_t status = OG_SUCCESS;
+    int token;
+
+    *has_ltt = OG_FALSE;
+    sql_text.value = *src;
+    sql_text.loc = loc;
+    OGSQL_SAVE_STACK(stmt);
+    scanner = scanner_init(&sql_text, &yyextra.core_yy_extra, &ScanKeywords, ScanKeywordTokens, stmt);
+    if (scanner == NULL) {
+        status = OG_ERROR;
+    } else {
+        /* Continue to EOF even after finding a temporary table, so later lexical errors are not hidden. */
+        while ((token = core_yylex(&token_value, &token_loc, scanner)) != 0) {
+            if (token == LEX_ERROR_TOKEN) {
+                status = OG_ERROR;
+                break;
+            }
+            if (token == IDENT && token_value.str != NULL && knl_is_llt_by_name2(token_value.str[0])) {
+                *has_ltt = OG_TRUE;
+            }
+        }
+        scanner_finish(scanner);
+    }
+    stmt->parser_text = parser_text_bak;
+    stmt->parser_text_valid = parser_text_valid_bak;
+    OGSQL_RESTORE_STACK(stmt);
+    return status;
+}
+
 static bool32 pl_bison_find_top_word(text_t *src, const char *word, uint32 start, uint32 *pos)
 {
     int32 depth = 0;
@@ -4173,7 +4212,7 @@ static status_t compile_static_sql_context(sql_stmt_t *stmt, text_t *src, key_wi
 
     OGSQL_SAVE_STACK(stmt);
     key_wid = pl_bison_leading_sql_keyword(&sql, key_wid);
-    pl_bison_static_sql_arg_t arg = { context, &sql, key_wid, &loc, &entity->sqls, input, src };
+    pl_bison_static_sql_arg_t arg = { context, &sql, key_wid, &loc, &entity->sqls, input, src, NULL };
     if (pl_bison_parse_static_sql(stmt, &arg) != OG_SUCCESS) {
         OGSQL_RESTORE_STACK(stmt);
         return OG_ERROR;
@@ -4220,7 +4259,7 @@ static status_t compile_static_cursor_sql_context(pl_compiler_t *compiler, text_
      */
     set_cursor_args_visible(decl, OG_TRUE);
     pl_bison_static_sql_arg_t arg = {
-        &decl->cursor.ogx->context, &sql, key_wid, &loc, &entity->sqls, decl->cursor.input, src
+        &decl->cursor.ogx->context, &sql, key_wid, &loc, &entity->sqls, decl->cursor.input, src, NULL
     };
     status = pl_bison_parse_static_sql(stmt, &arg);
     set_cursor_args_visible(decl, OG_FALSE);
@@ -4236,12 +4275,46 @@ static status_t compile_static_cursor_sql_context(pl_compiler_t *compiler, text_
     return sql_append_references(&entity->ref_list, decl->cursor.ogx->context);
 }
 
+/* Probe DML, including WITH queries, for local temporary table identifiers. */
+static status_t pl_bison_sql_has_ltt(sql_stmt_t *stmt, text_t *src, key_wid_t key_wid, source_location_t loc,
+    bool32 *has_ltt)
+{
+    *has_ltt = OG_FALSE;
+    /* Cursor SQL keeps its existing static compilation path. */
+    switch (key_wid) {
+        case KEY_WORD_SELECT:
+        case KEY_WORD_INSERT:
+        case KEY_WORD_UPDATE:
+        case KEY_WORD_DELETE:
+        case KEY_WORD_MERGE:
+        case KEY_WORD_REPLACE:
+        case KEY_WORD_WITH:
+            return pl_bison_scan_sql(stmt, src, loc, has_ltt);
+        default:
+            return OG_SUCCESS;
+    }
+}
+
 static status_t compile_static_sql_line(sql_stmt_t *stmt, text_t *src, key_wid_t key_wid, source_location_t loc,
     pl_line_sql_t *line)
 {
     pl_compiler_t *compiler = stmt->pl_compiler;
     pl_entity_t *entity = compiler->entity;
+    bool32 has_ltt;
 
+    OG_RETURN_IFERR(pl_bison_sql_has_ltt(stmt, src, key_wid, loc, &has_ltt));
+    if (has_ltt) {
+        /* Resolve the table at execution time, after any preceding dynamic CREATE has run. */
+        text_t sql = { 0 };
+        OG_RETURN_IFERR(pl_bison_prepare_static_sql(stmt, src, key_wid, &line->into, loc, &sql));
+        pl_bison_static_sql_arg_t arg = {
+            &line->context, &sql, key_wid, &loc, &entity->sqls, line->input, src, line
+        };
+        OGSQL_SAVE_STACK(stmt);
+        status_t status = pl_bison_parse_static_sql(stmt, &arg);
+        OGSQL_RESTORE_STACK(stmt);
+        return status;
+    }
     line->is_dynamic_sql = OG_FALSE;
     OG_RETURN_IFERR(compile_static_sql_context(stmt, src, key_wid, loc, line->input, &line->into, &line->context));
     if (IS_DML_INTO_PL_VAR(line->context->type) && line->context->rs_columns != NULL) {

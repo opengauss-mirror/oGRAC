@@ -119,6 +119,9 @@ static void fix_type_for_compare_expr_list(expr_tree_t *expr);
 static status_t convert_expr_tree_to_galist(sql_stmt_t *stmt, expr_tree_t *expr, galist_t **list);
 static status_t attach_pending_subselects_to_query(sql_query_t *query, sql_array_t *pending);
 static status_t sql_parse_table_cast_type(sql_stmt_t *stmt, expr_tree_t **expr, char *name, source_location_t loc);
+static status_t bison_set_pl_param_range(core_yyscan_t yyscanner, expr_tree_t *expr, int offset,
+    int next_token);
+static void bison_keep_set_target(sql_stmt_t *stmt, expr_tree_t *expr);
 static status_t bison_json_column_error(core_yyscan_t yyscanner, lex_location_t start, int json_end,
     lex_location_t target, const char *message);
 static expr_tree_t *bison_cond_node_to_bare_expr(cond_node_t *node);
@@ -1255,6 +1258,7 @@ set_clause:
 single_set_clause:
             columnref '=' ctext_expr
                 {
+                    bison_keep_set_target(og_yyget_extra(yyscanner)->core_yy_extra.stmt, $1);
                     column_value_pair_t *pair = NULL;
                     if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(column_value_pair_t), (void **)&pair)) {
                         parser_abort_or_yyerror("init column pair failed");
@@ -1314,6 +1318,7 @@ multiple_set_clause:
 set_target_list:
             columnref
             {
+                bison_keep_set_target(og_yyget_extra(yyscanner)->core_yy_extra.stmt, $1);
                 column_value_pair_t *pair = NULL;
                 if (sql_alloc_mem(og_yyget_extra(yyscanner)->core_yy_extra.stmt->context, sizeof(column_value_pair_t), (void **)&pair)) {
                     parser_abort_or_yyerror("init column pair failed");
@@ -1323,6 +1328,7 @@ set_target_list:
             }
             | set_target_list ',' columnref
             {
+                bison_keep_set_target(og_yyget_extra(yyscanner)->core_yy_extra.stmt, $3);
                 column_value_pair_t *pair = $1;
                 expr_tree_t *arg_tree = pair->column_expr;
                 expr_tree_t **temp = &arg_tree->next;
@@ -5783,6 +5789,8 @@ func_application: func_name '(' ')'
                             &expr, $1, $3, @1.loc) != OG_SUCCESS) {
                             parser_abort_or_yyerror("init function call expr failed");
                         }
+                        BISON_ABORT_IFERR(sql_bind_static_pl_collection_expr(
+                            og_yyget_extra(yyscanner)->core_yy_extra.stmt, expr, @1.offset, @4.offset + 1));
                         $$ = expr;
                     }
 /*$$include "gram-dialect-func-application.y"*/
@@ -6736,6 +6744,10 @@ columnref:  ColId opt_orajoin
                         &expr, $1, NULL, $2 ? EXPR_NODE_JOIN : EXPR_NODE_COLUMN, @1.loc) != OG_SUCCESS) {
                         parser_abort_or_yyerror("init columnref expr failed");
                     }
+                    if (expr->root->type == EXPR_NODE_PARAM && yychar == YYEMPTY) {
+                        yychar = YYLEX;
+                    }
+                    BISON_ABORT_IFERR(bison_set_pl_param_range(yyscanner, expr, @1.offset, yychar));
                     $$ = expr;
                 }
             | ColId indirection opt_orajoin
@@ -6745,6 +6757,10 @@ columnref:  ColId opt_orajoin
                         &expr, $1, $2, $3 ? EXPR_NODE_JOIN : EXPR_NODE_COLUMN, @1.loc) != OG_SUCCESS) {
                         parser_abort_or_yyerror("init columnref expr failed");
                     }
+                    if (expr->root->type == EXPR_NODE_PARAM && yychar == YYEMPTY) {
+                        yychar = YYLEX;
+                    }
+                    BISON_ABORT_IFERR(bison_set_pl_param_range(yyscanner, expr, @1.offset, yychar));
                     $$ = expr;
                 }
         ;
@@ -19249,6 +19265,54 @@ static status_t sql_bison_make_all_priv_list(sql_stmt_t *stmt, const char *name,
     priv_def->priv_id = (uint32)ALL_PRIVILEGES;
     priv_def->priv_type = PRIV_TYPE_ALL_PRIV;
     priv_def->start_loc = loc;
+    return OG_SUCCESS;
+}
+
+static void bison_keep_set_target(sql_stmt_t *stmt, expr_tree_t *expr)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    if (compiler == NULL || compiler->last_line == NULL || compiler->last_line->type != LINE_SQL ||
+        !((pl_line_sql_t *)compiler->last_line)->is_dynamic_sql || expr->root->type != EXPR_NODE_PARAM) {
+        return;
+    }
+    /* SET targets name table columns even when a PL variable has the same name. */
+    sql_param_mark_t *mark = (sql_param_mark_t *)cm_galist_get(stmt->context->params,
+        VALUE(uint32, &expr->root->value));
+    mark->offset = OG_INVALID_ID32;
+}
+
+/* Retain original spelling when PL inputs are rewritten for deferred SQL execution. */
+static status_t bison_set_pl_param_range(core_yyscan_t yyscanner, expr_tree_t *expr, int offset,
+    int next_token)
+{
+    base_yy_extra_type *extra = og_yyget_extra(yyscanner);
+    sql_stmt_t *stmt = extra->core_yy_extra.stmt;
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    base_yy_raw_parse_state_t *state = &extra->raw_parse;
+
+    if (compiler == NULL || compiler->last_line == NULL || compiler->last_line->type != LINE_SQL ||
+        !((pl_line_sql_t *)compiler->last_line)->is_dynamic_sql || expr->root->type != EXPR_NODE_PARAM) {
+        return OG_SUCCESS;
+    }
+    if (next_token == LEX_ERROR_TOKEN) {
+        return OG_ERROR;
+    }
+    /* columnref ensures a lookahead token; EOF does not advance the token history. */
+    int last = next_token == 0 ? state->last_returned_token_offset : state->prev_returned_token_offset;
+    if (offset < 0 || last < offset || (size_t)last >= state->sourcebuflen) {
+        OG_SRC_THROW_ERROR(expr->loc, ERR_SQL_SYNTAX_ERROR, "invalid PL input source range");
+        return OG_ERROR;
+    }
+    int end = last + 1;
+    if ((state->sourcebuf[last] != ']' && pl_bison_raw_name_end(state, last, &end) != OG_SUCCESS) ||
+        end <= offset || (size_t)end > state->sourcebuflen) {
+        OG_SRC_THROW_ERROR(expr->loc, ERR_SQL_SYNTAX_ERROR, "invalid PL input source range");
+        return OG_ERROR;
+    }
+    sql_param_mark_t *mark = (sql_param_mark_t *)cm_galist_get(stmt->context->params,
+        VALUE(uint32, &expr->root->value));
+    mark->offset = (uint32)offset;
+    mark->len = (uint32)(end - offset);
     return OG_SUCCESS;
 }
 

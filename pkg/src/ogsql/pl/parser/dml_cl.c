@@ -790,6 +790,71 @@ static status_t pl_bison_set_static_sql_source(sql_stmt_t *stmt, sql_stmt_t *sub
     return OG_SUCCESS;
 }
 
+/* Build execution-time SQL from Bison bindings; keep literals, comments and identifiers verbatim. */
+static status_t pl_bison_param_order(const void *left, const void *right, int32 *result)
+{
+    uint32 lpos = ((const sql_param_mark_t *)left)->offset;
+    uint32 rpos = ((const sql_param_mark_t *)right)->offset;
+    *result = (lpos > rpos) - (lpos < rpos);
+    return OG_SUCCESS;
+}
+
+static status_t pl_bison_make_dynamic_sql(sql_stmt_t *stmt, text_t *src, pl_bison_static_sql_arg_t *arg)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    galist_t *params = stmt->context->params;
+    galist_t *input = NULL;
+    text_buf_t sql;
+    text_t source = *src;
+    uint32 offset = 0;
+    char name_buf[OG_NAME_BUFFER_SIZE];
+    text_t name;
+
+    /* Trigger rewriting also uses convert_buf; preserve its source before writing the result. */
+    if (src->str == compiler->convert_buf) {
+        OG_RETURN_IFERR(sql_push(stmt, src->len, (void **)&source.str));
+        MEMS_RETURN_IFERR(memcpy_s(source.str, src->len, src->str, src->len));
+        src = &source;
+    }
+    CM_INIT_TEXTBUF(&sql, compiler->convert_buf_size, compiler->convert_buf);
+    OG_RETURN_IFERR(plc_init_galist(compiler, &input));
+    OG_RETURN_IFERR(cm_galist_sort(params, pl_bison_param_order));
+    for (uint32 i = 0; i < params->count; i++) {
+        sql_param_mark_t *mark = (sql_param_mark_t *)cm_galist_get(params, i);
+        if (mark->offset == OG_INVALID_ID32) {
+            continue; /* SET targets are SQL column names, even when a PL variable has the same name. */
+        }
+        if (mark->len == 0 || mark->offset < offset || mark->offset > src->len ||
+            mark->len > src->len - mark->offset || mark->pnid >= arg->input->count) {
+            OG_SRC_THROW_ERROR(*arg->loc, ERR_SQL_SYNTAX_ERROR, "invalid deferred SQL parameter range");
+            return OG_ERROR;
+        }
+        expr_node_t *node = (expr_node_t *)cm_galist_get(arg->input, mark->pnid);
+        OG_RETURN_IFERR(plc_verify_address_expr(compiler, node));
+        OG_RETURN_IFERR(plc_clone_expr_node(compiler, &node));
+        OG_RETURN_IFERR(cm_galist_insert(input, node));
+        OG_RETURN_IFERR(plc_make_input_name(input, name_buf, sizeof(name_buf), &name));
+        text_t part = { .str = src->str + offset, .len = mark->offset - offset };
+        if (!cm_buf_append_text(&sql, &part) || !cm_buf_append_text(&sql, &name)) {
+            OG_THROW_ERROR(ERR_BUFFER_OVERFLOW, src->len, sql.max_size);
+            return OG_ERROR;
+        }
+        offset = mark->offset + mark->len;
+    }
+    text_t tail = { .str = src->str + offset, .len = src->len - offset };
+    if (!cm_buf_append_text(&sql, &tail)) {
+        OG_THROW_ERROR(ERR_BUFFER_OVERFLOW, src->len, sql.max_size);
+        return OG_ERROR;
+    }
+    pl_line_sql_t *line = arg->dynamic_line;
+    OG_RETURN_IFERR(plc_create_dynamic_sql_expr(compiler->stmt, &line->dynamic_sql, &sql.value, *arg->loc));
+    OG_RETURN_IFERR(plc_verify_expr(compiler, line->dynamic_sql));
+    OG_RETURN_IFERR(plc_clone_expr_tree(compiler, &line->dynamic_sql));
+    line->input = input;
+    line->is_dynamic_sql = OG_TRUE;
+    return OG_SUCCESS;
+}
+
 status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *arg)
 {
     sql_stmt_t *sub_stmt = NULL;
@@ -825,8 +890,9 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
 
     if (compiler != NULL) {
         compiler->current_input = arg->input;
-        if (!pl_bison_line_uses_input(compiler, compiler->last_line, arg->input)) {
+        if (arg->dynamic_line != NULL || !pl_bison_line_uses_input(compiler, compiler->last_line, arg->input)) {
             verify_line.ctrl.type = LINE_SQL;
+            verify_line.is_dynamic_sql = (arg->dynamic_line != NULL);
             verify_line.input = arg->input;
             compiler->last_line = (pl_line_ctrl_t *)&verify_line;
         }
@@ -838,13 +904,26 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
             break;
         }
         if (plc_rewrite_trigger_variants(compiler, arg->sql, &parsed_sql, *arg->loc,
-            PLC_TRIGGER_REWRITE_AS_PARAM, &source_map) != OG_SUCCESS) {
+            arg->dynamic_line == NULL ? PLC_TRIGGER_REWRITE_AS_PARAM : PLC_TRIGGER_REWRITE_AS_NAME,
+            &source_map) != OG_SUCCESS) {
             pl_check_and_set_loc(*arg->loc);
             break;
         }
         sql_text.value = parsed_sql;
         source_map.body_len = parsed_sql.len;
         sql_text.loc = bison_source_map_location(&source_map, 0);
+
+        if (arg->dynamic_line != NULL) {
+            /* The table may be created by an earlier EXECUTE IMMEDIATE at execution time. */
+            bison_source_scope_enter(&source_scope, sub_stmt, &sql_text.value, &source_map);
+            status_t syntax_status = sql_parse_dml_syntax(sub_stmt, arg->key_wid, &sql_text);
+            bison_source_scope_leave(&source_scope);
+            if (syntax_status == OG_SUCCESS) {
+                status = pl_bison_make_dynamic_sql(sub_stmt, &parsed_sql, arg);
+            }
+            sql_release_context(sub_stmt);
+            break;
+        }
 
         bison_source_scope_enter(&source_scope, sub_stmt, &sql_text.value, &source_map);
         status_t parse_status = sql_parse_dml_directly(sub_stmt, arg->key_wid, &sql_text);
@@ -874,7 +953,9 @@ status_t pl_bison_parse_static_sql(sql_stmt_t *stmt, pl_bison_static_sql_arg_t *
         compiler->last_line = save_last_line;
     }
     stmt->session->current_stmt = save_curr_stmt;
-    *arg->ogx = sub_stmt->context;
+    if (arg->dynamic_line == NULL) {
+        *arg->ogx = sub_stmt->context;
+    }
     sql_release_lob_info(sub_stmt);
     sql_release_resource(sub_stmt, OG_TRUE);
     CM_FREE_PTR(sub_stmt->stat);

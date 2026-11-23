@@ -3753,6 +3753,76 @@ static status_t sql_try_convert_static_pl_var_to_param(sql_stmt_t *stmt, expr_no
     return OG_SUCCESS;
 }
 
+static status_t sql_restore_pl_input_node(visit_assist_t *assist, expr_node_t **node)
+{
+    if ((*node)->type != EXPR_NODE_PARAM) {
+        return OG_SUCCESS;
+    }
+    sql_stmt_t *stmt = assist->stmt;
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    uint32 id = VALUE(uint32, &(*node)->value);
+    if (id < assist->result0 || id >= stmt->context->params->count) {
+        OG_SRC_THROW_ERROR((*node)->loc, ERR_SQL_SYNTAX_ERROR, "invalid PL collection input");
+        return OG_ERROR;
+    }
+    sql_param_mark_t *mark = (sql_param_mark_t *)cm_galist_get(stmt->context->params, id);
+    if (mark->pnid >= compiler->current_input->count) {
+        OG_SRC_THROW_ERROR((*node)->loc, ERR_SQL_SYNTAX_ERROR, "invalid PL collection input");
+        return OG_ERROR;
+    }
+    expr_node_t saved = **node;
+    **node = *(expr_node_t *)cm_galist_get(compiler->current_input, mark->pnid);
+    (*node)->owner = saved.owner;
+    (*node)->next = saved.next;
+    (*node)->prev = saved.prev;
+    (*node)->unary = saved.unary;
+    (*node)->loc = saved.loc;
+    return OG_SUCCESS;
+}
+
+status_t sql_bind_static_pl_collection_expr(sql_stmt_t *stmt, expr_tree_t *expr, int32 begin, int32 end)
+{
+    pl_compiler_t *compiler = (pl_compiler_t *)stmt->pl_compiler;
+    expr_node_t *node = expr->root;
+    if (compiler == NULL || compiler->current_input == NULL || node->type != EXPR_NODE_V_ADDR ||
+        compiler->last_line == NULL || compiler->last_line->type != LINE_SQL ||
+        !((pl_line_sql_t *)compiler->last_line)->is_dynamic_sql) {
+        return OG_SUCCESS;
+    }
+    var_address_pair_t *pair = sql_get_last_addr_pair(node);
+    if (pair == NULL || pair->type != UDT_COLL_ELEMT_ADDR) {
+        return OG_SUCCESS;
+    }
+    galist_t *params = stmt->context->params;
+    if (begin < 0 || end <= begin || (uint32)end > stmt->parser_text.len || params == NULL ||
+        params->count != compiler->current_input->count) {
+        OG_SRC_THROW_ERROR(node->loc, ERR_SQL_SYNTAX_ERROR, "invalid PL collection input range");
+        return OG_ERROR;
+    }
+    uint32 first = params->count;
+    while (first > 0) {
+        sql_param_mark_t *mark = (sql_param_mark_t *)cm_galist_get(params, first - 1);
+        if (mark->offset < (uint32)begin || mark->offset >= (uint32)end) {
+            break;
+        }
+        first--;
+    }
+    /* Evaluate the subscript in PL, then bind the whole element as one SQL input. */
+    visit_assist_t assist;
+    sql_init_visit_assist(&assist, stmt, NULL);
+    assist.result0 = first;
+    OG_RETURN_IFERR(visit_expr_tree(&assist, pair->coll_elemt->id, sql_restore_pl_input_node));
+    OG_RETURN_IFERR(plc_verify_limit_expr(compiler, pair->coll_elemt->id));
+    params->count = first;
+    stmt->context->pname_count = first;
+    compiler->current_input->count = first;
+    OG_RETURN_IFERR(sql_try_convert_static_pl_var_to_param(stmt, node));
+    sql_param_mark_t *mark = (sql_param_mark_t *)cm_galist_get(params, first);
+    mark->offset = (uint32)begin;
+    mark->len = (uint32)(end - begin);
+    return OG_SUCCESS;
+}
+
 static bool32 sql_is_nameable_reserved_columnref(pl_columnref_expr_arg_t *arg)
 {
     word_t word = { 0 };

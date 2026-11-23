@@ -1681,6 +1681,16 @@ void sql_parse_set_context_procinfo(sql_stmt_t *stmt)
     }
 }
 
+/* Prepare Bison SQL bindings without opening DML tables or building an execution plan. */
+status_t sql_parse_dml_syntax(sql_stmt_t *stmt, key_wid_t key_wid, sql_text_t *sql_text)
+{
+    OG_RETURN_IFERR(sql_alloc_context(stmt));
+    sql_context_uncacheable(stmt->context);
+    stmt->context->ctrl.uid = stmt->session->knl_session.uid;
+    sql_init_plan_count(stmt);
+    return sql_create_dml_context(stmt, sql_text, key_wid);
+}
+
 status_t sql_parse_dml_directly(sql_stmt_t *stmt, key_wid_t key_wid, sql_text_t *sql_text)
 {
     OG_RETURN_IFERR(sql_alloc_context(stmt));
