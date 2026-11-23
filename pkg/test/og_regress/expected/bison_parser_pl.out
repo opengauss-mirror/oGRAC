@@ -4944,6 +4944,113 @@ PL/SQL procedure successfully completed.
 SQL> set serveroutput off;
 
 OFF
+SQL>
+SQL> -- Local temporary tables are resolved after EXECUTE IMMEDIATE creates them.
+SQL> alter system set local_temporary_table_enabled = true scope = memory;
+
+Succeed.
+
+SQL> set serveroutput on;
+
+ON
+SQL> declare
+  2     v_value int;
+  3 begin
+  4     for i in 1..3 loop
+  5         execute immediate 'drop table if exists #bison_pl_ltt';
+  6         execute immediate 'create temporary table #bison_pl_ltt(a int)';
+  7         insert into #bison_pl_ltt values(i);
+  8         update #bison_pl_ltt set a = a + i returning a into v_value;
+  9         dbe_output.print_line(v_value);
+ 10         select a into v_value from #bison_pl_ltt;
+ 11         dbe_output.print_line(v_value);
+ 12     end loop;
+ 13 end;
+ 14 /
+
+2
+2
+4
+4
+6
+6
+
+PL/SQL procedure successfully completed.
+
+SQL> drop table if exists #bison_pl_ltt;
+
+Succeed.
+
+SQL> -- Keep Bison token spelling and bind repeated variables in source order.
+SQL> declare
+  2     type id_tab_t is table of int index by binary_integer;
+  3     v_ids id_tab_t;
+  4     a int := 7;
+  5     v_value int;
+  6     v_note varchar(80);
+  7 begin
+  8     execute immediate 'create temporary table #bison_pl_ltt(a int)';
+  9     insert into #bison_pl_ltt(a) values(a::integer + a);
+ 10     update #bison_pl_ltt t set a = t.a + a
+ 11         returning t.a, 'into from # literal' into v_value, v_note;
+ 12     dbe_output.print_line(v_value || ':' || v_note);
+ 13     select t.a + a, 'quote'' into from' into v_value, v_note
+ 14         from U&"\0023BISON_PL_LTT" t;
+ 15     dbe_output.print_line(v_value || ':' || v_note);
+ 16     v_ids(1) := 1;
+ 17     v_ids(2) := 2;
+ 18     forall i in 1..2
+ 19         insert into #bison_pl_ltt values(v_ids(i));
+ 20     select sum(t.a) into v_value from #bison_pl_ltt t;
+ 21     dbe_output.print_line(v_value);
+ 22 end;
+ 23 /
+
+21:into from # literal
+28:quote' into from
+24
+
+PL/SQL procedure successfully completed.
+
+SQL> drop table if exists #bison_pl_ltt;
+
+Succeed.
+
+SQL> -- A CTE temp table is created by earlier dynamic SQL, so CREATE PROCEDURE must not resolve it yet.
+SQL> create or replace procedure bison_pl_with_ltt_proc as
+  2     v int;
+  3 begin
+  4     execute immediate 'drop table if exists #bison_pl_with_t';
+  5     execute immediate 'create temporary table #bison_pl_with_t(a int)';
+  6     execute immediate 'insert into #bison_pl_with_t values(9)';
+  7     with q as (select a from #bison_pl_with_t) select a into v from q;
+  8     dbe_output.print_line(v);
+  9 end;
+ 10 /
+
+Succeed.
+
+SQL> call bison_pl_with_ltt_proc;
+
+9
+
+PL/SQL procedure successfully completed.
+
+SQL> drop procedure bison_pl_with_ltt_proc;
+
+Succeed.
+
+SQL> drop table if exists #bison_pl_with_t;
+
+Succeed.
+
+SQL> set serveroutput off;
+
+OFF
+SQL> alter system set local_temporary_table_enabled = false scope = memory;
+
+Succeed.
+
 SQL> 
 SQL> alter system set use_bison_parser = false;
 

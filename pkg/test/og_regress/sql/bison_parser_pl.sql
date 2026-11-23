@@ -2837,4 +2837,64 @@ end;
 /
 set serveroutput off;
 
+-- Local temporary tables are resolved after EXECUTE IMMEDIATE creates them.
+alter system set local_temporary_table_enabled = true scope = memory;
+set serveroutput on;
+declare
+    v_value int;
+begin
+    for i in 1..3 loop
+        execute immediate 'drop table if exists #bison_pl_ltt';
+        execute immediate 'create temporary table #bison_pl_ltt(a int)';
+        insert into #bison_pl_ltt values(i);
+        update #bison_pl_ltt set a = a + i returning a into v_value;
+        dbe_output.print_line(v_value);
+        select a into v_value from #bison_pl_ltt;
+        dbe_output.print_line(v_value);
+    end loop;
+end;
+/
+drop table if exists #bison_pl_ltt;
+-- Keep Bison token spelling and bind repeated variables in source order.
+declare
+    type id_tab_t is table of int index by binary_integer;
+    v_ids id_tab_t;
+    a int := 7;
+    v_value int;
+    v_note varchar(80);
+begin
+    execute immediate 'create temporary table #bison_pl_ltt(a int)';
+    insert into #bison_pl_ltt(a) values(a::integer + a);
+    update #bison_pl_ltt t set a = t.a + a
+        returning t.a, 'into from # literal' into v_value, v_note;
+    dbe_output.print_line(v_value || ':' || v_note);
+    select t.a + a, 'quote'' into from' into v_value, v_note
+        from U&"\0023BISON_PL_LTT" t;
+    dbe_output.print_line(v_value || ':' || v_note);
+    v_ids(1) := 1;
+    v_ids(2) := 2;
+    forall i in 1..2
+        insert into #bison_pl_ltt values(v_ids(i));
+    select sum(t.a) into v_value from #bison_pl_ltt t;
+    dbe_output.print_line(v_value);
+end;
+/
+drop table if exists #bison_pl_ltt;
+-- A CTE temp table is created by earlier dynamic SQL, so CREATE PROCEDURE must not resolve it yet.
+create or replace procedure bison_pl_with_ltt_proc as
+    v int;
+begin
+    execute immediate 'drop table if exists #bison_pl_with_t';
+    execute immediate 'create temporary table #bison_pl_with_t(a int)';
+    execute immediate 'insert into #bison_pl_with_t values(9)';
+    with q as (select a from #bison_pl_with_t) select a into v from q;
+    dbe_output.print_line(v);
+end;
+/
+call bison_pl_with_ltt_proc;
+drop procedure bison_pl_with_ltt_proc;
+drop table if exists #bison_pl_with_t;
+set serveroutput off;
+alter system set local_temporary_table_enabled = false scope = memory;
+
 alter system set use_bison_parser = false;

@@ -307,6 +307,7 @@ status_t sql_create_datetime_const_expr(sql_stmt_t *stmt, expr_tree_t **expr, co
     source_location_t loc);
 status_t sql_create_columnref_expr(sql_stmt_t *stmt, expr_tree_t **expr, const char* val, galist_t *list,
     expr_node_type_t type, source_location_t loc);
+status_t sql_bind_static_pl_collection_expr(sql_stmt_t *stmt, expr_tree_t *expr, int32 begin, int32 end);
 status_t sql_create_pl_attr_expr(sql_stmt_t *stmt, expr_tree_t **expr, const text_t *name, const text_t *attr_name,
     source_location_t loc, bool32 *matched);
 status_t sql_create_indices_expr(sql_stmt_t *stmt, expr_tree_t **expr, int32 start, int32 end, source_location_t loc);
