@@ -766,14 +766,14 @@ status_t arch_create_open_file(arch_proc_context_t *proc_ctx, const char *file_n
     return OG_SUCCESS;
 }
 
-void arch_set_first_scn(void *buf, knl_scn_t *scn)
+void arch_set_first_scn(void *buf, uint32 data_size, knl_scn_t *scn)
 {
     log_batch_t *batch = (log_batch_t *)(buf);
     if (batch == NULL) {
         OG_LOG_RUN_ERR("[DTC RCY] batch is null");
         return;
     }
-    if (!dtc_rcy_validate_batch(batch)) {
+    if (!dtc_rcy_validate_batch(batch, data_size)) {
         return;
     }
     *scn = batch->scn;
@@ -792,10 +792,10 @@ status_t arch_check_log_valid(int32 data_size, char *buf)
                 data_size, invalide_size);
             return OG_ERROR;
         }
-        if (buffer_size < batch->size) {
+        if (buffer_size < batch->size || buffer_size < batch->space_size) {
             break;
         }
-        if (!dtc_rcy_validate_batch(batch)) {
+        if (!dtc_rcy_validate_batch(batch, (uint32)buffer_size)) {
             OG_LOG_RUN_ERR("[ARCH] batch is invalidate, read_size[%d], invalide_size[%u]",
                 data_size, invalide_size);
             return OG_ERROR;
@@ -1041,7 +1041,7 @@ status_t arch_flush_head(device_type_t arch_file_type, const char *dst_name, arc
         return OG_ERROR;
     }
  
-    arch_set_first_scn(arch_buf->aligned_buf, &first_scn);
+    arch_set_first_scn(arch_buf->aligned_buf, (uint32)data_size, &first_scn);
     head->first = first_scn;
     head->last = OG_INVALID_ID64;
     head->first_lsn = proc_ctx->last_archived_log_record.start_lsn;
@@ -2825,7 +2825,11 @@ void arch_check_cont_archived_log_file(arch_proc_context_t *proc_ctx)
         return;
     }
 
-    log_point_t *contflush_point = &session->kernel->lrcv_mgr.streams[0].contflush_point;
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
+    if (lrcv == NULL) {
+        return;
+    }
+    log_point_t *contflush_point = &lrcv->contflush_point;
     if (LOG_POINT_FILE_LT(*contflush_point, rcy_point)) {
         contflush_point->rst_id = rcy_point.rst_id;
         contflush_point->asn = rcy_point.asn;
@@ -4003,7 +4007,10 @@ char *arch_get_dest_type(knl_session_t *session, uint32 id, arch_attr_t *attr, b
     }
 
     if (attr->enable) {
-        lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
+        lrcv_context_t *lrcv = lrcv_get_local_stream(session);
+        if (lrcv == NULL) {
+            return "UNKNOWN";
+        }
         if (lrcv->status == LRCV_DISCONNECTED || lrcv->status == LRCV_NEED_REPAIR ||
             lrcv_get_primary_server(session, 0, host, OG_HOST_NAME_BUFFER_SIZE, &port) != OG_SUCCESS) {
             return "UNKNOWN";
@@ -5044,6 +5051,7 @@ status_t arch_get_tmp_file_last_lsn(char *buf, int32 size_read, uint64 *lsn, uin
     int32 buffer_size = size_read;
     uint32 invalide_size = 0;
     log_batch_t *batch = NULL;
+    log_batch_t *last_valid_batch = NULL;
     while (buffer_size >= sizeof(log_batch_t)) {
         batch = (log_batch_t *)(buf + invalide_size);
         if (batch == NULL) {
@@ -5051,22 +5059,23 @@ status_t arch_get_tmp_file_last_lsn(char *buf, int32 size_read, uint64 *lsn, uin
                            size_read, invalide_size);
             return OG_ERROR;
         }
-        if (buffer_size < batch->size) {
+        if (buffer_size < batch->size || buffer_size < batch->space_size) {
             break;
         }
-        if (!dtc_rcy_validate_batch(batch)) {
+        if (!dtc_rcy_validate_batch(batch, (uint32)buffer_size)) {
             OG_LOG_RUN_ERR("[DTC RCY] batch is invalidate, read_size[%d], invalide_size[%u]",
                            size_read, invalide_size);
             return OG_ERROR;
         }
+        last_valid_batch = batch;
         invalide_size += batch->space_size;
         buffer_size -= batch->space_size;
     }
-    if (batch == NULL) {
+    if (last_valid_batch == NULL) {
         OG_LOG_RUN_ERR("[DTC RCY] batch is null, read_size[%d]", size_read);
         return OG_ERROR;
     }
-    *lsn = batch->lsn;
+    *lsn = last_valid_batch->lsn;
     *data_size = invalide_size;
     return OG_SUCCESS;
 }

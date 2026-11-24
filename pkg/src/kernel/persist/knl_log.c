@@ -1011,13 +1011,28 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
     log_file_t *file = &ogx->files[ogx->curr_file];
 
     batch->head.magic_num = LOG_MAGIC_NUMBER;
-    batch->head.point.lfn = DB_INC_LFN(ogx->lfn);
+    /*
+     * Allocate the batch lfn with an atomic add.  lsnd reads redo_ctx.lfn
+     * without holding flush_lock to build the drain certificate (its
+     * "every allocated batch has been flushed" watermark), so on aarch64 the
+     * seq_cst RMW guarantees the new value is published strictly and the
+     * reader cannot observe a stale lfn that would make an unflushed batch
+     * look flushed.
+     */
+    batch->head.point.lfn = (uint64)cm_atomic_inc((atomic_t *)&ogx->lfn);
     batch->head.point.block_id = (uint32)(file->head.write_pos / file->ctrl->block_size);
     batch->head.point.asn = file->head.asn;
     batch->head.point.rst_id = file->head.rst_id;
-    if (cm_dbs_is_enable_dbs() == OG_TRUE) {
-        batch->head.point.lsn = batch->lsn;
-    }
+    /*
+     * The batch head's point.lsn must carry the real Lamport-clock LSN on
+     * every device type.  DBStor (ULOG) redo is addressed by LSN so it was
+     * always written here, but raw/DSS devices skipped it and left the
+     * initial sentinel (2^41) in the field: the standby's per-node rcy point
+     * then kept that sentinel forever and DV_STANDBYS.REPLAY_LSN showed an
+     * abnormally large value.  log_cmp_point ignores lsn on non-DBStor
+     * devices, so writing the real value does not change point ordering.
+     */
+    batch->head.point.lsn = batch->lsn;
     log_batch_tail_t *tail = (log_batch_tail_t *)(ogx->logwr_buf + ogx->logwr_buf_pos);
     tail->magic_num = batch->head.magic_num;
     tail->point = batch->head.point;
@@ -1070,12 +1085,19 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
         }
     }
 
-    ogx->flushed_lfn = batch->head.point.lfn;
+    /*
+     * Publish the flush watermarks with seq_cst stores: lsnd reads them
+     * without holding flush_lock to build the drain certificate, so on
+     * aarch64 the atomic store guarantees the reader cannot observe a stale
+     * or half-ordered value.  Both fields are written only after the batch has
+     * reached disk (and, for lsnd_flush_log, after it has been queued for the
+     * log sender), so "flushed_lfn/flushed_lsn >= X" always means every batch
+     * with lfn/lsn <= X is durable and was handed to the sender in order.
+     */
+    cm_atomic_set((atomic_t *)&ogx->flushed_lfn, (int64)batch->head.point.lfn);
     ogx->curr_point = batch->head.point;
     ogx->curr_point.block_id += (uint32)(batch->space_size / file->ctrl->block_size);
-    if (cm_dbs_is_enable_dbs() == OG_TRUE) {
-        ogx->curr_point.lsn = batch->lsn;
-    }
+    ogx->curr_point.lsn = batch->lsn;
     ogx->curr_replay_point = ogx->curr_point;
     ckpt_set_trunc_point_with_rbp_lsn(session, &ogx->curr_point, batch->lsn);
     rbp_queue_set_trunc_point(session, &ogx->curr_point);
@@ -1091,7 +1113,7 @@ status_t log_flush(knl_session_t *session, log_point_t *point, knl_scn_t *scn, u
     }
 
     knl_panic(ogx->flushed_lsn < batch->lsn || !cm_dbs_is_enable_dbs());
-    ogx->flushed_lsn = batch->lsn;
+    cm_atomic_set((atomic_t *)&ogx->flushed_lsn, (int64)batch->lsn);
     ogx->curr_scn = batch->scn;
     log_stat(ogx, batch->space_size);
 
@@ -1645,10 +1667,26 @@ static log_buffer_t *log_write_try_lock(knl_session_t *session, log_context_t *o
     }
 }
 
+/* The caller holds the selected redo buffer lock. */
+static inline void log_assign_group_lsn(knl_session_t *session, log_context_t *ogx)
+{
+    /* Only a cluster sender can arm tracking. Test under buf->lock so first
+     * activation also accounts for writers that were already in flight. */
+    if (SECUREC_UNLIKELY(DB_IS_CLUSTER(session) && cm_atomic32_get(&ogx->drain_tracking))) {
+        cm_spin_lock(&ogx->drain_lock, NULL);
+        session->curr_lsn = (uint64)DB_INC_LSN(session);
+        ogx->write_lsn = session->curr_lsn;
+        cm_spin_unlock(&ogx->drain_lock);
+    } else {
+        session->curr_lsn = (uint64)DB_INC_LSN(session);
+    }
+}
+
 static void log_write(knl_session_t *session)
 {
     log_buffer_t *buf = NULL;
     uint8 cur_slot = 0;
+    log_context_t *ogx = &session->kernel->redo_ctx;
 
     if (SECUREC_UNLIKELY(DB_NOT_READY(session))) {
         return;
@@ -1665,6 +1703,9 @@ static void log_write(knl_session_t *session)
             /*
              * lsn is used to check if the page changed in btree split. for nologging table,
              * if page changed, there is no log recording, lsn should increase though.
+             * Deliberately NOT published to write_lsn: no redo is produced, so
+             * the drain certificate treats this clock bump as vacuum (see
+             * the drain-certificate construction in repl_log_send.c).
              */
             session->curr_lsn = (uint64)DB_INC_LSN(session);
         }
@@ -1701,8 +1742,8 @@ static void log_write(knl_session_t *session)
         continue;
     }
 
-    /* lsn of groups that inside one log_buf, must be ordered, so it must be protected by spinlock */
-    session->curr_lsn = (uint64)DB_INC_LSN(session);
+    log_assign_group_lsn(session, ogx);
+
     uint32 start_pos = buf->write_pos;
     buf->write_pos += total_size;
 
@@ -1879,7 +1920,11 @@ void log_recycle_file(knl_session_t *session, log_point_t *point)
     }
 
     log_context_t *ogx = &session->kernel->redo_ctx;
-    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
+
+    if (lrcv == NULL) {
+        return;
+    }
     arch_log_id_t last_arch_log;
 
     arch_last_archived_log(session, ARCH_DEFAULT_DEST, &last_arch_log);
@@ -3226,9 +3271,17 @@ status_t log_get_file_offset(knl_session_t *session, const char *file_name, alig
         return OG_ERROR;
     }
 
-    int64 file_size = cm_file_size(handle);
-    if (file_size == -1) {
-        cm_close_file(handle);
+    /*
+     * The handle may be a remote DSS/RAW device (e.g. +vg2/redo01.dat on a
+     * cluster standby), so the size must be queried through the device layer
+     * (cm_get_size_device -> dss_fseek).  A plain local lseek64
+     * (cm_file_size) on such a remote handle always fails with EBADF and
+     * sends the standby replay reader into an open/size/close error loop
+     * (observed right after BUILD STANDBY DATABASE transfers the redo files).
+     */
+    int64 file_size = -1;
+    if (cm_get_size_device(type, handle, &file_size) != OG_SUCCESS || file_size == -1) {
+        cm_close_device(type, &handle);
         OG_LOG_RUN_ERR("[LOG] failed to get %s size ", file_name);
         OG_THROW_ERROR(ERR_SEEK_FILE, 0, SEEK_END, errno);
         return OG_ERROR;
@@ -3261,10 +3314,10 @@ status_t log_get_file_offset(knl_session_t *session, const char *file_name, alig
         if (first_batch && !DB_IS_RAFT_ENABLED(session->kernel) &&
             (batch->head.point.asn != head.asn || batch->head.point.rst_id != head.rst_id)) {
             *offset = CM_CALC_ALIGN(sizeof(log_file_head_t), (uint32)head.block_size);
-            cm_close_file(handle);
-            OG_LOG_RUN_INF("[LOG] no need to repair file offset for %s, "
-                           "batch rstid/asn [%u/%u], file head rstid/asn [%u/%u]",
-                           file_name, batch->head.point.rst_id, batch->head.point.asn, head.rst_id, head.asn);
+            cm_close_device(type, &handle);
+            OG_LOG_DEBUG_INF("[LOG] no need to repair file offset for %s, "
+                             "batch rstid/asn [%u/%u], file head rstid/asn [%u/%u]",
+                             file_name, batch->head.point.rst_id, batch->head.point.asn, head.rst_id, head.asn);
             return OG_SUCCESS;
         }
 
@@ -3296,7 +3349,7 @@ status_t log_get_file_offset(knl_session_t *session, const char *file_name, alig
         }
     }
 
-    cm_close_file(handle);
+    cm_close_device(type, &handle);
     return OG_SUCCESS;
 }
 

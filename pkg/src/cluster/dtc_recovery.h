@@ -352,10 +352,30 @@ typedef struct st_dtc_rcy_node {
     int32 handle[OG_MAX_LOG_FILES];  // online logfile handle
     log_point_t analysis_read_end_point;
     log_point_t recovery_read_end_point;
+    /*
+     * Received-watermark floor for the cross-node replay ordering barrier.
+     *
+     * This is the highest batch LSN already present in this node's local
+     * received log files (observed by the read thread while scanning the
+     * read buffers).  It is the "received watermark" of the drain-certificate
+     * design: even when the live receiver is not bound yet (standby restart,
+     * source node reconnecting), redo up to this LSN is durably received, so
+     * it must never be bypassed by another node's higher-LSN redo.  Monotonic
+     * within a recovery cycle; written by the per-node read thread, read by
+     * the fetch thread, so it is accessed with seq_cst atomics.
+     */
+    uint64 recv_lsn;
+    /*
+     * LFN of the last batch the read thread loaded for this node, tracked
+     * alongside recv_lsn.  dtc_rcy_min_frontier compares it against the
+     * receiver's stream_flushed_lfn: only when the flushed tail has actually
+     * been read may the drain certificate advance this node's effective
+     * frontier (otherwise the certificate would let the other nodes' redo
+     * run past flushed-but-unread redo, breaking same-page LSN order).
+     */
+    uint64 recv_lfn;
     uint64 latest_lsn;
     uint64 latest_rcy_end_lsn;
-    /* LSN through which this source has certified all redo as flushed and sent. */
-    uint64 lsn_frontier;
     dtc_rcy_lsn_records_t lsn_records; // lsn records for reduce redundant log
     void *para_stream;
     bool32 para_peek_ready;
@@ -575,7 +595,7 @@ status_t dtc_rcy_analyze_group(knl_session_t *session, log_group_t *group);
 status_t dtc_rcy_analyze_group_ex(knl_session_t *session, log_group_t *group, uint32 node_id, uint64 batch_lfn);
 rcy_set_item_t *dtc_rcy_get_item(rcy_set_bucket_t *bucket, page_id_t page_id);
 status_t dtc_rcy_process_batch(knl_session_t *session, log_batch_t *batch);
-bool32 dtc_rcy_validate_batch(log_batch_t *batch);
+bool32 dtc_rcy_validate_batch(const log_batch_t *batch, uint32 available_size);
 status_t dtc_add_dirtypage_for_recovery(knl_session_t *session, page_id_t page_id);
 status_t dtc_update_ckpt_log_point(void);
 EXTER_ATTACK status_t dtc_rcy_set_update_no_need_replay_batch(rcy_set_t *rcy_set,

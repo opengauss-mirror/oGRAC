@@ -163,6 +163,8 @@ typedef struct st_rcy_preload_info {
 typedef struct st_rcy_context {
     spinlock_t lock;
     bool32 paral_rcy;
+    bool32 paral_ctx_ready;
+    atomic_t paral_ctx_ref_count;
     bool32 rcy_end;
     bool32 is_working;
 
@@ -272,7 +274,7 @@ status_t rcy_verify_checksum(knl_session_t *session, log_batch_t *batch);
 void rcy_init_proc(knl_session_t *session);
 void rcy_close_proc(knl_session_t *session);
 void rcy_wait_preload_complete(knl_session_t *session);
-void rcy_wait_replay_complete(knl_session_t *session);
+bool32 rcy_wait_replay_complete(knl_session_t *session);
 status_t rcy_alloc_cmp(rcy_context_t *rcy);
 bool32 db_terminate_lfn_reached(knl_session_t *session, uint64 curr_lfn);
 

@@ -393,7 +393,7 @@ status_t arch_force_archive_file(knl_session_t *session, uint32 node_id, int32 b
                                  device_type_t type, int32 handle);
 void arch_dbstor_do_archive(knl_session_t *session, arch_proc_context_t *proc_ctx);
 status_t arch_get_tmp_file_last_lsn(char *buf, int32 size_read, uint64 *lsn, uint32 *data_size);
-void arch_set_first_scn(void *buf, knl_scn_t *scn);
+void arch_set_first_scn(void *buf, uint32 data_size, knl_scn_t *scn);
 status_t arch_flush_head(device_type_t arch_file_type, const char *dst_name, arch_proc_context_t *proc_ctx,
                          log_file_t *file, log_file_head_t *head);
 status_t arch_check_log_valid(int32 data_size, char *buf);

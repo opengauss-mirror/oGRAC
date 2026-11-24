@@ -337,6 +337,13 @@ static knl_column_t g_managed_standby_columns[] = {
     { 5, "FLUSH_POINT",        0, 0, OG_TYPE_VARCHAR, OG_MAX_NUMBER_LEN,     0, 0, OG_FALSE, 0, { 0 } },
     { 6, "PRIMARY_CURR_POINT", 0, 0, OG_TYPE_VARCHAR, OG_MAX_NUMBER_LEN,     0, 0, OG_FALSE, 0, { 0 } },
     { 7, "REPLAY_POINT",       0, 0, OG_TYPE_VARCHAR, OG_MAX_NUMBER_LEN,     0, 0, OG_FALSE, 0, { 0 } },
+    { 8, "REPLAY_LSN",         0, 0, OG_TYPE_BIGINT,  sizeof(uint64),         0, 0, OG_FALSE, 0, { 0 } },
+    /*
+     * N-to-M replication: the standby accepts one redo stream per source
+     * primary node.  RFS emits one row per bound stream and NODE_ID identifies
+     * which source node the row belongs to; MRP/ARCH/FAL rows use -1.
+     */
+    { 9, "NODE_ID",            0, 0, OG_TYPE_INTEGER, sizeof(int32),         0, 0, OG_FALSE, 0, { 0 } },
 };
 
 static knl_column_t g_ha_sync_info_columns[] = {
@@ -2874,115 +2881,227 @@ typedef struct st_managed_standby_row {
     char flush_point[OG_MAX_NUMBER_LEN];
     char primary_curr_point[OG_MAX_NUMBER_LEN];
     char replay_point[OG_MAX_NUMBER_LEN];
+    uint64 replay_lsn; /* replayed LSN (Lamport clock) of this row */
+    int32 node_id; /* source node of this stream; -1 for non-stream rows */
 } managed_standby_row_t;
 
-static managed_standby_row_t g_managed_standby_rows[] = {
-    { "RFS",  { 0 }, 0, { 0 }, 0 },
-    { "MRP",  { 0 }, 0, { 0 }, 0 },
-    { "ARCH", { 0 }, 0, { 0 }, 0 },
-    { "FAL",  { 0 }, 0, { 0 }, 0 },
-};
+#define MANAGED_STANDBY_FIXED_ROWS 3 /* MRP / ARCH / FAL */
 
-#define MANAGED_STANDBY_ROW_COUNT (sizeof(g_managed_standby_rows) / sizeof(managed_standby_row_t))
-
-static char *vm_get_lrcv_status(knl_session_t *session)
+static char *vm_get_lrcv_status(knl_session_t *session, lrcv_context_t *lrcv)
 {
-    lrcv_context_t *lrcv_ctx = &((knl_session_t *)session)->kernel->lrcv_mgr.streams[0];
     log_context_t *redo_ctx = &((knl_session_t *)session)->kernel->redo_ctx;
 
-    if (lrcv_ctx->status < LRCV_PREPARE) {
+    if (lrcv->status < LRCV_PREPARE) {
         return "OPEN";
     }
 
-    if (lrcv_ctx->status < LRCV_READY) {
+    if (lrcv->status < LRCV_READY) {
         return "CONNECTED";
     }
 
-    if (redo_ctx->curr_point.rst_id < lrcv_ctx->primary_curr_point.rst_id ||
-        (redo_ctx->curr_point.rst_id == lrcv_ctx->primary_curr_point.rst_id &&
-        redo_ctx->curr_point.asn < lrcv_ctx->primary_curr_point.asn)) {
+    /*
+     * NEED_REPAIR and DETACHED both rank above LRCV_READY, so without these
+     * branches a stream parked for repair (or removed) is reported as
+     * STREAMING/CATCHING_UP -- the view would claim replication is healthy
+     * exactly when it has stopped and the standby needs a rebuild.
+     */
+    if (lrcv->status == LRCV_NEED_REPAIR) {
+        return "NEED_REPAIR";
+    }
+
+    if (lrcv->status == LRCV_DETACHED) {
+        return "DETACHED";
+    }
+
+    if (redo_ctx->curr_point.rst_id < lrcv->primary_curr_point.rst_id ||
+        (redo_ctx->curr_point.rst_id == lrcv->primary_curr_point.rst_id &&
+        redo_ctx->curr_point.asn < lrcv->primary_curr_point.asn)) {
         return "CATCHING_UP";
     } else {
         return "STREAMING";
     }
 }
 
-static void vw_managed_standby_parameter_fetch(knl_handle_t session)
+/*
+ * Fill one RFS row for a bound redo stream.  N-to-M replication gives every
+ * source primary node its own stream on the standby, so RFS reports one row
+ * per stream with that stream's receiver status, flush point and primary
+ * current point; NODE_ID identifies the source node.
+ */
+static void vw_managed_standby_fill_rfs(knl_handle_t session, lrcv_context_t *lrcv, managed_standby_row_t *row)
 {
     knl_session_t *se = (knl_session_t *)session;
 
-    if (se->kernel->lrcv_mgr.streams[0].thread.closed) {
-        PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[0].status, OG_DYNVIEW_NORMAL_LEN,
+    row->name = "RFS";
+    row->node_id = (int32)lrcv->src_node_id;
+    if (lrcv->thread.closed) {
+        PRTS_RETVOID_IFERR(snprintf_s(row->status, OG_DYNVIEW_NORMAL_LEN,
             OG_DYNVIEW_NORMAL_LEN - 1, "%s", "UNUSED"));
-        g_managed_standby_rows[0].rst_id = OG_INVALID_ASN;
-        PRTS_RETVOID_IFERR(sprintf_s(g_managed_standby_rows[0].thread_id, OG_DYNVIEW_NORMAL_LEN, "%x", 0));
-        g_managed_standby_rows[0].asn = OG_INVALID_ASN;
+        row->rst_id = OG_INVALID_ASN;
+        PRTS_RETVOID_IFERR(sprintf_s(row->thread_id, OG_DYNVIEW_NORMAL_LEN, "%x", 0));
+        row->asn = OG_INVALID_ASN;
     } else {
-        PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[0].status, OG_DYNVIEW_NORMAL_LEN,
-            OG_DYNVIEW_NORMAL_LEN - 1, "%s", vm_get_lrcv_status(se)));
-        g_managed_standby_rows[0].rst_id = (uint32)se->kernel->lrcv_mgr.streams[0].flush_point.rst_id;
-        PRTS_RETVOID_IFERR(sprintf_s(g_managed_standby_rows[0].thread_id, OG_DYNVIEW_NORMAL_LEN, "%llx",
-            (uint64)se->kernel->lrcv_mgr.streams[0].thread.id));
-        g_managed_standby_rows[0].asn = se->kernel->lrcv_mgr.streams[0].flush_point.asn;
+        PRTS_RETVOID_IFERR(snprintf_s(row->status, OG_DYNVIEW_NORMAL_LEN,
+            OG_DYNVIEW_NORMAL_LEN - 1, "%s", vm_get_lrcv_status(se, lrcv)));
+        row->rst_id = (uint32)lrcv->flush_point.rst_id;
+        PRTS_RETVOID_IFERR(sprintf_s(row->thread_id, OG_DYNVIEW_NORMAL_LEN, "%llx",
+            (uint64)lrcv->thread.id));
+        row->asn = lrcv->flush_point.asn;
     }
 
-    g_managed_standby_rows[0].replay_point[0] = '\0';
-    PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[0].flush_point, sizeof(g_managed_standby_rows[0].flush_point),
-        sizeof(g_managed_standby_rows[0].flush_point) - 1, "%llu-%u/%u/%llu", se->kernel->lrcv_mgr.streams[0].flush_point.rst_id,
-        se->kernel->lrcv_mgr.streams[0].flush_point.asn, se->kernel->lrcv_mgr.streams[0].flush_point.block_id,
-        (uint64)se->kernel->lrcv_mgr.streams[0].flush_point.lfn));
+    row->replay_point[0] = '\0';
+    /*
+     * RFS is the receive process: it has no replay progress of its own, so
+     * REPLAY_POINT / REPLAY_LSN stay empty (0) on RFS rows.  Replay progress
+     * is reported by the single MRP row (the replayer).
+     */
+    PRTS_RETVOID_IFERR(snprintf_s(row->flush_point, sizeof(row->flush_point),
+        sizeof(row->flush_point) - 1, "%llu-%u/%u/%llu", lrcv->flush_point.rst_id,
+        lrcv->flush_point.asn, lrcv->flush_point.block_id, (uint64)lrcv->flush_point.lfn));
 
-    PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[0].primary_curr_point,
-        sizeof(g_managed_standby_rows[0].primary_curr_point), sizeof(g_managed_standby_rows[0].primary_curr_point) - 1,
-        "%llu-%u/%u/%llu", se->kernel->lrcv_mgr.streams[0].primary_curr_point.rst_id, se->kernel->lrcv_mgr.streams[0].primary_curr_point.asn,
-        se->kernel->lrcv_mgr.streams[0].primary_curr_point.block_id, (uint64)se->kernel->lrcv_mgr.streams[0].primary_curr_point.lfn));
+    PRTS_RETVOID_IFERR(snprintf_s(row->primary_curr_point,
+        sizeof(row->primary_curr_point), sizeof(row->primary_curr_point) - 1,
+        "%llu-%u/%u/%llu", lrcv->primary_curr_point.rst_id, lrcv->primary_curr_point.asn,
+        lrcv->primary_curr_point.block_id, (uint64)lrcv->primary_curr_point.lfn));
+}
 
-    if (se->kernel->lrpl_ctx.thread.closed) {
-        PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[1].status, OG_DYNVIEW_NORMAL_LEN,
+/* Fill the fixed MRP / ARCH / FAL rows (non-stream processes). */
+static void vw_managed_standby_fill_fixed(knl_handle_t session, uint32 idx, managed_standby_row_t *row)
+{
+    knl_session_t *se = (knl_session_t *)session;
+
+    row->node_id = -1;
+    row->flush_point[0] = '\0';
+    row->primary_curr_point[0] = '\0';
+    row->replay_point[0] = '\0';
+
+    if (idx == 0) { /* MRP: the log replayer */
+        row->name = "MRP";
+        if (se->kernel->lrpl_ctx.thread.closed) {
+            PRTS_RETVOID_IFERR(snprintf_s(row->status, OG_DYNVIEW_NORMAL_LEN,
+                OG_DYNVIEW_NORMAL_LEN - 1, "%s", "UNUSED"));
+            row->rst_id = OG_INVALID_ASN;
+            PRTS_RETVOID_IFERR(sprintf_s(row->thread_id, OG_DYNVIEW_NORMAL_LEN, "%x", 0));
+            row->asn = OG_INVALID_ASN;
+        } else {
+            PRTS_RETVOID_IFERR(snprintf_s(row->status, OG_DYNVIEW_NORMAL_LEN,
+                OG_DYNVIEW_NORMAL_LEN - 1, "%s", "OPEN"));
+            row->rst_id = (uint32)se->kernel->redo_ctx.curr_point.rst_id;
+            PRTS_RETVOID_IFERR(sprintf_s(row->thread_id, OG_DYNVIEW_NORMAL_LEN, "%llx",
+                (uint64)se->kernel->lrpl_ctx.thread.id));
+            row->asn = se->kernel->redo_ctx.curr_point.asn;
+        }
+        if (DB_IS_CLUSTER(se)) {
+            /*
+             * Cluster standby: continuous replay maintains one rcy point per
+             * source node (dtc_rcy_ctx), while lrpl_ctx.curr_point is only a
+             * stale snapshot taken when dtc_recover started.  Report the
+             * per-node rcy point with the smallest LSN as the overall replay
+             * progress (LSN is a Lamport clock comparable across nodes, lfn
+             * is not).
+             */
+            dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+            log_point_t slowest = { 0 };
+            bool32 have = OG_FALSE;
+            for (uint32 i = 0; i < dtc_rcy->node_count; i++) {
+                log_point_t *p = &dtc_rcy->rcy_log_points[i].rcy_point;
+                if (!have || p->lsn < slowest.lsn) {
+                    slowest = *p;
+                    have = OG_TRUE;
+                }
+            }
+        if (have) {
+            row->replay_lsn = slowest.lsn;
+            PRTS_RETVOID_IFERR(snprintf_s(row->replay_point,
+                sizeof(row->replay_point), sizeof(row->replay_point) - 1,
+                "%llu-%u/%u/%llu", slowest.rst_id, slowest.asn,
+                    slowest.block_id, (uint64)slowest.lfn));
+            }
+        } else {
+            row->replay_lsn = se->kernel->lrpl_ctx.curr_point.lsn;
+            PRTS_RETVOID_IFERR(snprintf_s(row->replay_point,
+                sizeof(row->replay_point), sizeof(row->replay_point) - 1,
+                "%llu-%u/%u/%llu", se->kernel->lrpl_ctx.curr_point.rst_id, se->kernel->lrpl_ctx.curr_point.asn,
+                se->kernel->lrpl_ctx.curr_point.block_id, (uint64)se->kernel->lrpl_ctx.curr_point.lfn));
+        }
+    } else if (idx == 1) { /* ARCH */
+        row->name = "ARCH";
+        if (se->kernel->arch_ctx.arch_proc[0].read_thread.closed) {
+            PRTS_RETVOID_IFERR(snprintf_s(row->status, OG_DYNVIEW_NORMAL_LEN,
+                OG_DYNVIEW_NORMAL_LEN - 1, "%s", "UNUSED"));
+            row->rst_id = OG_INVALID_ASN;
+            PRTS_RETVOID_IFERR(sprintf_s(row->thread_id, OG_DYNVIEW_NORMAL_LEN, "%x", 0));
+            row->asn = OG_INVALID_ASN;
+        } else {
+            PRTS_RETVOID_IFERR(snprintf_s(row->status, OG_DYNVIEW_NORMAL_LEN,
+                OG_DYNVIEW_NORMAL_LEN - 1, "%s", "OPEN"));
+            row->rst_id = se->kernel->arch_ctx.arch_proc[0].last_archived_log.rst_id;
+            PRTS_RETVOID_IFERR(sprintf_s(row->thread_id, OG_DYNVIEW_NORMAL_LEN, "%llx",
+                (uint64)se->kernel->arch_ctx.arch_proc[0].read_thread.id));
+            row->asn = se->kernel->arch_ctx.arch_proc[0].last_archived_log.asn;
+        }
+    } else { /* FAL */
+        row->name = "FAL";
+        PRTS_RETVOID_IFERR(snprintf_s(row->status, OG_DYNVIEW_NORMAL_LEN,
             OG_DYNVIEW_NORMAL_LEN - 1, "%s", "UNUSED"));
-        g_managed_standby_rows[1].rst_id = OG_INVALID_ASN;
-        PRTS_RETVOID_IFERR(sprintf_s(g_managed_standby_rows[1].thread_id, OG_DYNVIEW_NORMAL_LEN, "%x", 0));
-        g_managed_standby_rows[1].asn = OG_INVALID_ASN;
-    } else {
-        PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[1].status, OG_DYNVIEW_NORMAL_LEN,
-            OG_DYNVIEW_NORMAL_LEN - 1, "%s", "OPEN"));
-        g_managed_standby_rows[1].rst_id = (uint32)se->kernel->redo_ctx.curr_point.rst_id;
-        PRTS_RETVOID_IFERR(sprintf_s(g_managed_standby_rows[1].thread_id, OG_DYNVIEW_NORMAL_LEN, "%llx",
-            (uint64)se->kernel->lrpl_ctx.thread.id));
-        g_managed_standby_rows[1].asn = se->kernel->redo_ctx.curr_point.asn;
+        row->rst_id = OG_INVALID_ASN;
+        PRTS_RETVOID_IFERR(sprintf_s(row->thread_id, OG_DYNVIEW_NORMAL_LEN, "%x", 0));
+        row->asn = OG_INVALID_ASN;
     }
+}
 
-    g_managed_standby_rows[1].flush_point[0] = '\0';
-    g_managed_standby_rows[1].primary_curr_point[0] = '\0';
-    PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[1].replay_point,
-        sizeof(g_managed_standby_rows[1].replay_point), sizeof(g_managed_standby_rows[1].replay_point) - 1,
-        "%llu-%u/%u/%llu", se->kernel->lrpl_ctx.curr_point.rst_id, se->kernel->lrpl_ctx.curr_point.asn,
-        se->kernel->lrpl_ctx.curr_point.block_id, (uint64)se->kernel->lrpl_ctx.curr_point.lfn));
-
-    if (se->kernel->arch_ctx.arch_proc[0].read_thread.closed) {
-        PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[2].status, OG_DYNVIEW_NORMAL_LEN,
-            OG_DYNVIEW_NORMAL_LEN - 1, "%s", "UNUSED"));
-        g_managed_standby_rows[2].rst_id = OG_INVALID_ASN;
-        PRTS_RETVOID_IFERR(sprintf_s(g_managed_standby_rows[2].thread_id, OG_DYNVIEW_NORMAL_LEN, "%x", 0));
-        g_managed_standby_rows[2].asn = OG_INVALID_ASN;
-    } else {
-        PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[2].status, OG_DYNVIEW_NORMAL_LEN,
-            OG_DYNVIEW_NORMAL_LEN - 1, "%s", "OPEN"));
-        g_managed_standby_rows[2].rst_id = se->kernel->arch_ctx.arch_proc[0].last_archived_log.rst_id;
-        PRTS_RETVOID_IFERR(sprintf_s(g_managed_standby_rows[2].thread_id, OG_DYNVIEW_NORMAL_LEN, "%llx",
-            (uint64)se->kernel->arch_ctx.arch_proc[0].read_thread.id));
-        g_managed_standby_rows[2].asn = se->kernel->arch_ctx.arch_proc[0].last_archived_log.asn;
+/* Number of bound redo streams on this standby. */
+static uint32 vm_managed_standby_stream_count(knl_handle_t session)
+{
+    knl_session_t *se = (knl_session_t *)session;
+    uint32 count = 0;
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        if (se->kernel->lrcv_mgr.streams[i].stream_bound) {
+            count++;
+        }
     }
+    return count;
+}
 
-    g_managed_standby_rows[2].flush_point[0] = '\0';
-    g_managed_standby_rows[2].primary_curr_point[0] = '\0';
-    g_managed_standby_rows[2].replay_point[0] = '\0';
+/* The k-th (0-based) bound stream, or NULL. */
+static lrcv_context_t *vm_managed_standby_get_stream(knl_handle_t session, uint32 kth)
+{
+    knl_session_t *se = (knl_session_t *)session;
+    uint32 seen = 0;
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        lrcv_context_t *lrcv = &se->kernel->lrcv_mgr.streams[i];
+        if (lrcv->stream_bound) {
+            if (seen == kth) {
+                return lrcv;
+            }
+            seen++;
+        }
+    }
+    return NULL;
+}
+
+static status_t vw_managed_standby_row_put(row_assist_t *ra, managed_standby_row_t *row)
+{
+    OG_RETURN_IFERR(row_put_str(ra, row->name));
+    OG_RETURN_IFERR(row_put_str(ra, row->status));
+    OG_RETURN_IFERR(row_put_int32(ra, (int32)row->rst_id));
+    OG_RETURN_IFERR(row_put_str(ra, row->thread_id));
+    OG_RETURN_IFERR(row_put_int32(ra, (int32)row->asn));
+    OG_RETURN_IFERR(row_put_str(ra, row->flush_point));
+    OG_RETURN_IFERR(row_put_str(ra, row->primary_curr_point));
+    OG_RETURN_IFERR(row_put_str(ra, row->replay_point));
+    OG_RETURN_IFERR(row_put_uint64(ra, row->replay_lsn));
+    OG_RETURN_IFERR(row_put_int32(ra, row->node_id));
+    return OG_SUCCESS;
 }
 
 static status_t vw_managed_standby_fetch(knl_handle_t session, knl_cursor_t *cursor)
 {
     uint64 id;
     row_assist_t ra;
+    managed_standby_row_t row;
+    lrcv_context_t *lrcv = NULL;
+    uint32 stream_count;
 
     if (knl_db_is_primary(session)) {
         cursor->eof = OG_TRUE;
@@ -2990,21 +3109,30 @@ static status_t vw_managed_standby_fetch(knl_handle_t session, knl_cursor_t *cur
     }
 
     id = cursor->rowid.vmid;
-    if (id >= MANAGED_STANDBY_ROW_COUNT) {
+    stream_count = vm_managed_standby_stream_count(session);
+    if (id >= stream_count + MANAGED_STANDBY_FIXED_ROWS) {
         cursor->eof = OG_TRUE;
         return OG_SUCCESS;
     }
 
-    vw_managed_standby_parameter_fetch(session);
+    errno_t err = memset_sp(&row, sizeof(row), 0, sizeof(row));
+    knl_securec_check(err);
     row_init(&ra, (char *)cursor->row, OG_MAX_ROW_SIZE, MANAGED_STANDBY_COLS);
-    OG_RETURN_IFERR(row_put_str(&ra, g_managed_standby_rows[id].name));
-    OG_RETURN_IFERR(row_put_str(&ra, g_managed_standby_rows[id].status));
-    OG_RETURN_IFERR(row_put_int32(&ra, (int32)g_managed_standby_rows[id].rst_id));
-    OG_RETURN_IFERR(row_put_str(&ra, g_managed_standby_rows[id].thread_id));
-    OG_RETURN_IFERR(row_put_int32(&ra, (int32)g_managed_standby_rows[id].asn));
-    OG_RETURN_IFERR(row_put_str(&ra, g_managed_standby_rows[id].flush_point));
-    OG_RETURN_IFERR(row_put_str(&ra, g_managed_standby_rows[id].primary_curr_point));
-    OG_RETURN_IFERR(row_put_str(&ra, g_managed_standby_rows[id].replay_point));
+    if (id < stream_count) {
+        lrcv = vm_managed_standby_get_stream(session, (uint32)id);
+        if (lrcv != NULL) {
+            vw_managed_standby_fill_rfs(session, lrcv, &row);
+        } else {
+            row.name = "RFS";
+            row.node_id = -1;
+            row.status[0] = '\0';
+            row.rst_id = OG_INVALID_ASN;
+            row.asn = OG_INVALID_ASN;
+        }
+    } else {
+        vw_managed_standby_fill_fixed(session, (uint32)(id - stream_count), &row);
+    }
+    OG_RETURN_IFERR(vw_managed_standby_row_put(&ra, &row));
 
     cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
     cursor->rowid.vmid++;
@@ -3837,7 +3965,7 @@ static status_t vw_instance_fetch(knl_handle_t se, knl_cursor_t *cursor)
     (void)row_put_int64(&row, (int64)kernel->db_startup_time);
     (void)row_put_str(&row, cm_sys_host_name());
     (void)row_put_str(&row, cm_sys_platform_name());
-    (void)row_put_str(&row, (kernel->lrcv_mgr.streams[0].session == NULL) ? "DISCONNECTED" : "CONNECTED");
+    (void)row_put_str(&row, lrcv_has_active_session((knl_session_t *)se) ? "CONNECTED" : "DISCONNECTED");
 
     cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
     cursor->rowid.vmid++;

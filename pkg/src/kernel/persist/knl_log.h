@@ -365,6 +365,28 @@ typedef struct st_log_context {
     volatile uint64 quorum_lfn;   // latest lfn which meets quorum agreement
     uint8 cache_align3[64];
 
+    /*
+     * Drain certificate support: lsnd snapshots the pair
+     * (C=DB_CURR_LSN, write_lsn) atomically to build the drain certificate
+     * that gates cross-node replay ordering on the standby:
+     * - write_lsn: the maximum LSN already handed out to a redo group on this
+     *   node.  The group may still be in flight (allocated but not yet
+     *   flushed), so "write_lsn <= flushed_lsn" is the strict condition that
+     *   the redo buffer has been flushed up to the latest write.
+     * - drain_lock: a plain spinlock. Once tracking is armed, redo writers hold it across the
+     *   two-instruction critical section that advances DB_INC_LSN together
+     *   with write_lsn, so lsnd's snapshot never observes a half-born redo
+     *   group (clock already advanced but the LSN not yet recorded in
+     *   write_lsn); lsnd holds the same lock to read a consistent
+     *   (DB_CURR_LSN, write_lsn) snapshot.
+     * The pair occupies its own cacheline to avoid false sharing with
+     * flushed_lfn/flushed_lsn, which lgwr updates frequently.
+     */
+    uint32 drain_align0[10];
+    volatile uint64 write_lsn;
+    spinlock_t drain_lock;
+    atomic32_t drain_tracking; /* one-way opt-in, published under all redo buffer locks */
+    uint32 drain_align1[12];
     uint32 buf_size;
     uint32 buf_count;
     volatile uint16 wid;

@@ -358,14 +358,22 @@ void rcy_wait_preload_complete(knl_session_t *session)
     }
 }
 
-void rcy_wait_replay_complete(knl_session_t *session)
+bool32 rcy_wait_replay_complete(knl_session_t *session)
 {
     rcy_context_t *rcy = &session->kernel->rcy_ctx;
     errno_t ret;
 
+    cm_spin_lock(&rcy->lock, NULL);
     if (!rcy->paral_rcy) {
-        return;
+        cm_spin_unlock(&rcy->lock);
+        return OG_TRUE;
     }
+    if (!rcy->paral_ctx_ready) {
+        cm_spin_unlock(&rcy->lock);
+        return OG_FALSE;
+    }
+    (void)cm_atomic_inc(&rcy->paral_ctx_ref_count);
+    cm_spin_unlock(&rcy->lock);
 
     rcy_wait_preload_complete(session);
     ret = memset_sp(rcy->page_bitmap, sizeof(uint16) * OG_RCY_MAX_PAGE_BITMAP_LEN, 0,
@@ -389,6 +397,8 @@ void rcy_wait_replay_complete(knl_session_t *session)
     if (KNL_RECOVERY_WITH_RBP(session->kernel)) {
         rbp_unsafe_redo_check(session);
     }
+    (void)cm_atomic_dec(&rcy->paral_ctx_ref_count);
+    return OG_TRUE;
 }
 
 static void rcy_wait_cond(knl_session_t *session, rcy_bucket_t *bucket, uint32 index, volatile uint32 *curr,
@@ -1022,7 +1032,12 @@ static inline void rcy_next_file(knl_session_t *session, log_point_t *point, boo
     log_context_t *ogx = &session->kernel->redo_ctx;
     reset_log_t *reset_log = &session->kernel->db.ctrl.core.resetlogs;
     database_t *db = &session->kernel->db;
-    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
+
+    if (lrcv == NULL) {
+        *need_more_log = OG_FALSE;
+        return;
+    }
 
     if (!lrcv->wait_info.waiting && LOG_POINT_FILE_EQUAL(*point, ogx->files[ogx->curr_file].head)) {
         *need_more_log = (db->status != DB_STATUS_RECOVERY) && db->status != DB_STATUS_REDO_ANALYSIS;
@@ -2451,6 +2466,10 @@ void rcy_init_proc(knl_session_t *session)
     }
 
     rcy->preload_proc_num = (i < rcy->preload_proc_num) ? i : rcy->preload_proc_num;
+    cm_spin_lock(&rcy->lock, NULL);
+    (void)cm_atomic_set(&rcy->paral_ctx_ref_count, 0);
+    rcy->paral_ctx_ready = rcy->paral_rcy;
+    cm_spin_unlock(&rcy->lock);
 
     return;
 }
@@ -2464,6 +2483,13 @@ void rcy_close_proc(knl_session_t *session)
 
     if (!rcy->paral_rcy) {
         return;
+    }
+
+    cm_spin_lock(&rcy->lock, NULL);
+    rcy->paral_ctx_ready = OG_FALSE;
+    cm_spin_unlock(&rcy->lock);
+    while (cm_atomic_get(&rcy->paral_ctx_ref_count) != 0) {
+        cm_spin_sleep();
     }
 
     rcy->last_lrpl_time = 0;  // make sure parallel threads close immediately

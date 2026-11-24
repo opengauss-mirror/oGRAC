@@ -719,6 +719,8 @@ static inline uint64 align_to_128m(uint64 size)
 #define OG_MIN_ARCH_CLEAN_LL_PERCENT (uint32)0
 #define OG_DTC_RCY_NODE_READ_BUF_TIMEOUT (uint32)(90 * 1000)
 #define OG_DTC_RCY_NODE_READ_BUF_SLEEP_TIME (uint32)1
+/* Hard bound on waiting for the rcy read log thread to exit during close. */
+#define OG_DTC_RCY_CLOSE_READ_THREAD_MAX_WAIT (uint64)(600 * 1000)
 #define OG_DTC_RCY_NODE_READ_TRY_TO_READ_LAST_FAILED_NODE_TIMES (uint32)100
 
 /* JSON */

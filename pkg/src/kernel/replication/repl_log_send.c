@@ -28,6 +28,8 @@
 #include "knl_context.h"
 #include "knl_abr.h"
 #include "dtc_dls.h"
+#include "dtc_switchover.h"
+#include "rc_reform.h"
 
 #define LSND_TID(ogx)           ((ogx)->thread.id)
 #define LOGIN_CS_RETRY_COUNT    10 // login cascaded standby retry count
@@ -158,10 +160,11 @@ static void lsnd_free_single_proc_context(lsnd_t *lsnd)
 static bool32 lsnd_connecting_primary(knl_session_t *session, const char *host, uint16 port)
 {
     database_t *db = &session->kernel->db;
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
     char pri_host[OG_HOST_NAME_BUFFER_SIZE];
     uint16 pri_port;
 
-    if (DB_IS_PRIMARY(db) || session->kernel->lrcv_mgr.streams[0].pipe == NULL) {
+    if (DB_IS_PRIMARY(db) || lrcv == NULL || lrcv->pipe == NULL) {
         return OG_FALSE;
     }
 
@@ -262,6 +265,7 @@ static bool32 lsnd_rcv_msg_is_valid(lsnd_t *lsnd, uint32 type)
         case REP_LOG_SWITCH_WAIT_REQ:
         case REP_QUERY_STATUS_RESP:
         case REP_SWITCH_REQ:
+        case REP_CLUSTER_SWITCH_REQ:
         case REP_ABR_RESP: {
             break;
         }
@@ -340,6 +344,34 @@ static status_t lsnd_send_switch_response(lsnd_t *lsnd)
     rep_msg_header_t rep_msg_header;
     rep_switch_resp_t req_switch_resp;
 
+    if (lsnd->cluster_switch) {
+        rep_msg_header_t cluster_hdr;
+        rep_cluster_switch_resp_t cluster_resp;
+
+        cluster_hdr.size = sizeof(rep_msg_header_t) + sizeof(rep_cluster_switch_resp_t);
+        cluster_hdr.type = REP_CLUSTER_SWITCH_RESP;
+        cluster_resp.state = REP_STATE_PROMOTE_APPROVE;
+        cluster_resp.reserved = 0;
+        dtc_switch_fill_resp(&cluster_resp);
+
+        if (cs_write_stream(&lsnd->pipe, (char *)&cluster_hdr, sizeof(rep_msg_header_t),
+            (int32)cm_atomic_get(&lsnd->session->kernel->attr.repl_pkg_size)) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[Log Sender] failed to send cluster switchover response message to standby");
+            return OG_ERROR;
+        }
+        if (cs_write_stream(&lsnd->pipe, (char *)&cluster_resp, sizeof(rep_cluster_switch_resp_t),
+            (int32)cm_atomic_get(&lsnd->session->kernel->attr.repl_pkg_size)) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[Log Sender] failed to send cluster switchover response body to standby");
+            return OG_ERROR;
+        }
+
+        lsnd->state = REP_STATE_NORMAL;
+        lsnd->cluster_switch = OG_FALSE;
+        OG_LOG_RUN_INF("[Log Sender] send cluster switchover response to standby, demoted=%llx",
+            cluster_resp.demoted_nodes);
+        return OG_SUCCESS;
+    }
+
     rep_msg_header.size = sizeof(rep_msg_header_t) + sizeof(rep_switch_resp_t);
     rep_msg_header.type = REP_SWITCH_RESP;
     req_switch_resp.state = lsnd->state;
@@ -363,6 +395,34 @@ static status_t lsnd_send_switch_response(lsnd_t *lsnd)
     return OG_SUCCESS;
 }
 
+static status_t lsnd_send_cluster_switch_response(lsnd_t *lsnd, rep_state_t state)
+{
+    rep_msg_header_t rep_msg_header;
+    rep_cluster_switch_resp_t cluster_resp;
+
+    rep_msg_header.size = sizeof(rep_msg_header_t) + sizeof(rep_cluster_switch_resp_t);
+    rep_msg_header.type = REP_CLUSTER_SWITCH_RESP;
+    cluster_resp.state = state;
+    cluster_resp.reserved = 0;
+    dtc_switch_fill_resp(&cluster_resp);
+
+    if (cs_write_stream(&lsnd->pipe, (char *)&rep_msg_header, sizeof(rep_msg_header_t),
+        (int32)cm_atomic_get(&lsnd->session->kernel->attr.repl_pkg_size)) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[Log Sender] failed to send cluster switchover response message to standby");
+        return OG_ERROR;
+    }
+    if (cs_write_stream(&lsnd->pipe, (char *)&cluster_resp, sizeof(rep_cluster_switch_resp_t),
+        (int32)cm_atomic_get(&lsnd->session->kernel->attr.repl_pkg_size)) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[Log Sender] failed to send cluster switchover response body to standby");
+        return OG_ERROR;
+    }
+
+    lsnd->state = REP_STATE_NORMAL;
+    lsnd->cluster_switch = OG_FALSE;
+    OG_LOG_RUN_INF("[Log Sender] send cluster switchover response to standby, state=%d", (int)state);
+    return OG_SUCCESS;
+}
+
 static status_t lsnd_process_switch_request(lsnd_t *lsnd)
 {
     switch_ctrl_t *ctrl = &lsnd->session->kernel->switch_ctrl;
@@ -382,6 +442,36 @@ static status_t lsnd_process_switch_request(lsnd_t *lsnd)
     cm_spin_unlock(&ctrl->lock);
 
     OG_LOG_RUN_INF("[Log Sender] received switchover request from standby");
+
+    return OG_SUCCESS;
+}
+
+static status_t lsnd_process_cluster_switch_request(lsnd_t *lsnd)
+{
+    knl_instance_t *kernel = lsnd->session->kernel;
+    switch_ctrl_t *ctrl = &kernel->switch_ctrl;
+    rep_cluster_switch_req_t *req = (rep_cluster_switch_req_t *)lsnd->recv_buf.read_buf.aligned_buf;
+
+    if (req->epoch != kernel->db.ctrl.core.cluster_epoch) {
+        OG_LOG_RUN_ERR("[Log Sender] cluster switchover epoch mismatch: local=%u peer=%u",
+            kernel->db.ctrl.core.cluster_epoch, req->epoch);
+        return OG_ERROR;
+    }
+
+    cm_spin_lock(&ctrl->lock, NULL);
+    if (ctrl->request != SWITCH_REQ_NONE) {
+        cm_spin_unlock(&ctrl->lock);
+        OG_LOG_RUN_INF("[Log Sender] primary may doing switchover, reject cluster switch request");
+        return lsnd_send_cluster_switch_response(lsnd, REP_STATE_REJECTED);
+    }
+    ctrl->request = SWITCH_REQ_DEMOTE;
+    lsnd->state = REP_STATE_DEMOTE_REQUEST;
+    lsnd->cluster_switch = OG_TRUE;
+    cm_spin_unlock(&ctrl->lock);
+
+    OG_LOG_RUN_INF("[Log Sender] received cluster switchover request from standby, epoch=%u nodes=%u",
+        req->epoch, req->node_count);
+    dtc_switch_start_primary_demote(lsnd->session, req->epoch, req->expected_nodes);
 
     return OG_SUCCESS;
 }
@@ -460,6 +550,26 @@ static inline void lsnd_process_hb_resp(lsnd_t *lsnd)
     }
 }
 
+static void lsnd_try_exit_catchup(lsnd_t *lsnd)
+{
+    knl_instance_t *knl = lsnd->session->kernel;
+
+    if (!lsnd->catchup_mode) {
+        return;
+    }
+    if (log_cmp_point(&lsnd->send_point, &knl->redo_ctx.curr_point) < 0) {
+        return;
+    }
+
+    lsnd->catchup_mode = OG_FALSE;
+    OG_LOG_RUN_INF("[Log Sender] catch-up complete for %s, send_point [%u-%u/%u/%llu] reached curr_point "
+                   "[%u-%u/%u/%llu], ARCHIVE_DEST mode now effective",
+                   lsnd->dest_info.peer_host, lsnd->send_point.rst_id, lsnd->send_point.asn,
+                   lsnd->send_point.block_id, (uint64)lsnd->send_point.lfn, knl->redo_ctx.curr_point.rst_id,
+                   knl->redo_ctx.curr_point.asn, knl->redo_ctx.curr_point.block_id,
+                   (uint64)knl->redo_ctx.curr_point.lfn);
+}
+
 static void lsnd_process_query_status_ready(lsnd_t *lsnd)
 {
     reset_log_t rst_log = lsnd->session->kernel->db.ctrl.core.resetlogs;
@@ -486,6 +596,19 @@ static void lsnd_process_query_status_ready(lsnd_t *lsnd)
                        rst_log.rst_id, rst_log.last_asn, rst_log.last_lfn,
                        lsnd->send_point.rst_id, lsnd->send_point.asn,
                        lsnd->send_point.block_id, (uint64)lsnd->send_point.lfn);
+    }
+
+    lsnd->catchup_mode = (log_cmp_point(&lsnd->send_point, &lsnd->session->kernel->redo_ctx.curr_point) < 0) ?
+        OG_TRUE : OG_FALSE;
+    if (lsnd->catchup_mode) {
+        OG_LOG_RUN_INF("[Log Sender] enter catch-up mode for %s until send_point reaches curr_point "
+                       "(peer flush [%u-%u/%u/%llu], curr [%u-%u/%u/%llu])",
+                       lsnd->dest_info.peer_host, lsnd->send_point.rst_id, lsnd->send_point.asn,
+                       lsnd->send_point.block_id, (uint64)lsnd->send_point.lfn,
+                       lsnd->session->kernel->redo_ctx.curr_point.rst_id,
+                       lsnd->session->kernel->redo_ctx.curr_point.asn,
+                       lsnd->session->kernel->redo_ctx.curr_point.block_id,
+                       (uint64)lsnd->session->kernel->redo_ctx.curr_point.lfn);
     }
 
     lsnd->send_buf.read_pos = 0;
@@ -561,6 +684,12 @@ static status_t lsnd_process_message(lsnd_t *lsnd, uint32 type)
         }
         case REP_SWITCH_REQ: {
             if (lsnd_process_switch_request(lsnd) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+            break;
+        }
+        case REP_CLUSTER_SWITCH_REQ: {
+            if (lsnd_process_cluster_switch_request(lsnd) != OG_SUCCESS) {
                 return OG_ERROR;
             }
             break;
@@ -690,11 +819,11 @@ static status_t lsnd_process_message_once(lsnd_t *lsnd)
 
 static inline bool32 lsnd_need_notify_repair(lsnd_t *lsnd)
 {
-    lrcv_context_t *lrcv = &lsnd->session->kernel->lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv = lrcv_get_local_stream(lsnd->session);
     database_t *db = &lsnd->session->kernel->db;
 
     if (DB_IS_PRIMARY(db) ||
-        (DB_IS_PHYSICAL_STANDBY(db) && lrcv->status == LRCV_READY)) {
+        (DB_IS_PHYSICAL_STANDBY(db) && lrcv != NULL && lrcv->status == LRCV_READY)) {
         return OG_TRUE;
     }
 
@@ -709,8 +838,24 @@ static status_t lsnd_put_batch_message(lsnd_t *lsnd, log_point_t *point, uint32 
     log_batch_tail_t *tail = NULL;
     uint32 left_size = (uint32)size;
     log_context_t *redo_ctx = &lsnd->session->kernel->redo_ctx;
-    log_file_t *file = &redo_ctx->files[file_id];
+    uint32 block_size;
+    log_file_t *file = NULL;
     uint32 new_compress_buf_size = 0;
+
+    /*
+     * Archived redo is sent with the file id of the online file that the asn
+     * maps to (redo files are assigned to asns in round-robin order).  On a
+     * fresh standby connection the sender may have no last_read_file_id yet,
+     * so guard against an out-of-range index and fall back to the archived
+     * file's block size.
+     */
+    if (file_id < redo_ctx->logfile_hwm) {
+        file = &redo_ctx->files[file_id];
+        block_size = file->ctrl->block_size;
+    } else {
+        file = NULL;
+        block_size = lsnd->arch_file.block_size;
+    }
 
     lsnd->send_buf.read_pos = 0;
     lsnd->send_buf.write_pos = 0;
@@ -777,7 +922,7 @@ static status_t lsnd_put_batch_message(lsnd_t *lsnd, log_point_t *point, uint32 
         rep_batch_req->log_point.lfn = batch->head.point.lfn;
         rep_batch_req->scn = batch->scn;
         lsnd->last_put_point.lfn = batch->head.point.lfn;
-        lsnd->last_put_point.block_id += batch->space_size / file->ctrl->block_size;
+        lsnd->last_put_point.block_id += batch->space_size / block_size;
 
         left_size -= batch->space_size;
 
@@ -862,6 +1007,10 @@ static status_t lsnd_read_arch_logfile(lsnd_t *lsnd)
         bool32 compressed = arch_is_compressed(arch_ctrl);
         errno_t ret = strcpy_sp(file->file_name, OG_FILE_NAME_BUFFER_SIZE, arch_ctrl->name);
         knl_securec_check(ret);
+        /* device type must be derived from the actual archived file name;
+         * deriving it before updating file->file_name would open a DSS file
+         * with a wrong device type and fail with ENOENT. */
+        type = cm_device_type(file->file_name);
 
         /* file is closed in lsnd_set_conn_error, or when file is read end in this function */
         if (cm_open_device(file->file_name, type,
@@ -919,14 +1068,34 @@ static status_t lsnd_read_arch_logfile(lsnd_t *lsnd)
         cm_close_device(type, &file->handle);
     }
 
+    /*
+     * Archived redo belongs to the online file that was assigned this asn.
+     * The standby mirrors the primary's file layout, so translate the asn to
+     * the primary's file id (files are assigned to asns round-robin) instead
+     * of relying on last_read_file_id, which is still invalid on a fresh
+     * standby connection and would crash the batch message assembly.
+     */
+    lsnd->last_read_asn = point->asn;
+    uint32 arch_file_id = (uint32)point->asn - 1;
+    if (lsnd->session->kernel->redo_ctx.logfile_hwm > 0) {
+        arch_file_id %= lsnd->session->kernel->redo_ctx.logfile_hwm;
+    }
+    lsnd->last_read_file_id = (int32)arch_file_id;
+
     return lsnd_put_batch_message(lsnd, point, (uint32)lsnd->last_read_file_id, size);
 }
 
 static bool32 lsnd_read_log_precheck(lsnd_t *lsnd, log_point_t *target_point)
 {
     log_point_t *send_point = &lsnd->send_point;
-    log_point_t flush_point = lsnd->session->kernel->lrcv_mgr.streams[0].flush_point;
+    lrcv_context_t *lrcv = lrcv_get_local_stream(lsnd->session);
+    log_point_t flush_point;
     database_t *db = &lsnd->session->kernel->db;
+
+    if (lrcv == NULL) {
+        return OG_FALSE;
+    }
+    flush_point = lrcv->flush_point;
 
     /*
      * The primary does not send logs to the standby temporarily,
@@ -936,8 +1105,9 @@ static bool32 lsnd_read_log_precheck(lsnd_t *lsnd, log_point_t *target_point)
         return OG_FALSE;
     }
 
-    // Sync standby no need to read batch from log file.
-    if (DB_IS_PRIMARY(db) && lsnd->dest_info.sync_mode == LOG_NET_TRANS_MODE_SYNC && !lsnd->tmp_async) {
+    // Sync standby no need to read batch from log file, except during gap catch-up.
+    if (DB_IS_PRIMARY(db) && lsnd->dest_info.sync_mode == LOG_NET_TRANS_MODE_SYNC && !lsnd->tmp_async &&
+        !lsnd->catchup_mode) {
         return OG_FALSE;
     }
 
@@ -947,12 +1117,23 @@ static bool32 lsnd_read_log_precheck(lsnd_t *lsnd, log_point_t *target_point)
         }
     }
 
-    if (log_cmp_point(send_point, target_point) >= 0 || LOG_POINT_LFN_EQUAL(send_point, target_point)) {
+    /*
+     * Do NOT treat "same LFN" as caught up.  A multi-stream standby that
+     * restarts can legitimately resume from a point inside the batch that is
+     * still the primary's current batch: its redo file is reset to the file
+     * header, so it reports a flush point with the same lfn but a LOWER block
+     * than the primary's current point (e.g. [0-3/1/8387] vs [0-3/377/8387]).
+     * The file-position comparison above already covers the "caught up" case
+     * (cmp >= 0); skipping on equal lfn here would silently drop the re-send
+     * and leave the standby's receiver stuck in CONNECTED forever.
+     */
+    if (log_cmp_point(send_point, target_point) >= 0) {
         return OG_FALSE;
     }
 
     cm_spin_lock(&lsnd->lock, NULL);
-    if ((DB_IS_PRIMARY(db) && lsnd->dest_info.sync_mode == LOG_NET_TRANS_MODE_SYNC && !lsnd->tmp_async) ||
+    if ((DB_IS_PRIMARY(db) && lsnd->dest_info.sync_mode == LOG_NET_TRANS_MODE_SYNC && !lsnd->tmp_async &&
+         !lsnd->catchup_mode) ||
         (send_point->lfn == target_point->lfn + 1)) {
         cm_spin_unlock(&lsnd->lock);
         return OG_FALSE;
@@ -966,10 +1147,11 @@ static bool32 lsnd_read_log_precheck(lsnd_t *lsnd, log_point_t *target_point)
 static bool32 lsnd_need_reconnect_cs(lsnd_t *lsnd)
 {
     knl_instance_t *knl = lsnd->session->kernel;
-    lrcv_context_t *lrcv = &knl->lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv = lrcv_get_local_stream(lsnd->session);
     database_t *db = &knl->db;
 
-    if (!DB_IS_PHYSICAL_STANDBY(db) || !lsnd->host_changed_reconnect || lrcv->status != LRCV_READY) {
+    if (!DB_IS_PHYSICAL_STANDBY(db) || !lsnd->host_changed_reconnect || lrcv == NULL ||
+        lrcv->status != LRCV_READY) {
         return OG_FALSE;
     }
 
@@ -989,6 +1171,8 @@ static bool32 lsnd_need_reconnect_cs(lsnd_t *lsnd)
 
 static inline bool32 lsnd_read_log_should_suspend(knl_session_t *session, uint32 fileid, bool32 loading_curr)
 {
+    lrcv_context_t *lrcv;
+
     if (!DB_IS_PHYSICAL_STANDBY(&session->kernel->db)) {
         return OG_FALSE;
     }
@@ -997,7 +1181,8 @@ static inline bool32 lsnd_read_log_should_suspend(knl_session_t *session, uint32
         return OG_FALSE;
     }
 
-    if (session->kernel->lrcv_mgr.streams[0].status < LRCV_READY) {
+    lrcv = lrcv_get_local_stream(session);
+    if (lrcv == NULL || lrcv->status < LRCV_READY) {
         return OG_TRUE;
     }
 
@@ -1044,27 +1229,70 @@ static status_t lsnd_read_log(lsnd_t *lsnd)
                 return OG_ERROR;
             }
         } else {
-            log_file_t *file = lsnd->session->kernel->redo_ctx.files + lsnd->session->kernel->redo_ctx.active_file;
-            // skip archive log file
-            while (file_id == OG_INVALID_ID32 && send_point->asn < file->head.asn) {
-                // If is archive log file, just move to next asn until it is an online log file.
-                if (send_point->rst_id < reset_log->rst_id && send_point->asn == reset_log->last_asn) {
-                    send_point->rst_id++;
+            /*
+             * The requested asn has no online log file.  It may have been
+             * recycled already (head.asn is OG_INVALID_ASN in memory while the
+             * archived file still contains the complete redo).  A standby that
+             * just (re)connected reports a flush point inside such an asn, so
+             * try the archive first and only skip to the next online file when
+             * no archived file exists for this asn.
+             */
+            arch_ctrl_t *arch_ctrl = arch_get_archived_log_info(lsnd->session, (uint32)send_point->rst_id,
+                                                                send_point->asn, 1, lsnd->session->kernel->id);
+            if (arch_ctrl != NULL) {
+                if (lsnd_read_arch_logfile(lsnd) != OG_SUCCESS) {
+                    OG_LOG_RUN_ERR("[Log Sender] failed to read archived log file with asn %u id %u ",
+                                   send_point->asn, lsnd->last_read_file_id);
+                    return OG_ERROR;
                 }
-                send_point->asn++;
-                send_point->block_id = 0;
-
-                if (!log_try_lock_logfile(lsnd->session)) {
-                    return OG_SUCCESS;
+            } else {
+                log_file_t *file = lsnd->session->kernel->redo_ctx.files + lsnd->session->kernel->redo_ctx.active_file;
+                /*
+                 * The asn is in neither an online file nor the archive, and
+                 * send_point is the peer's flush point -- precisely the redo
+                 * the standby still needs next.  Advancing past it (the skip
+                 * loop below) resumes the stream beyond a range that can never
+                 * be shipped, which punches a permanent hole into the standby's
+                 * log files: its flush/rcy point moves past redo it never
+                 * received, replay can no longer reconstruct those pages, and
+                 * the standby aborts on every restart.  Observed after a
+                 * send-timeout disconnect under replay lag, where the online
+                 * file holding the range was recycled before being archived.
+                 * Only a resetlog boundary legitimately renumbers asn; anything
+                 * else is a real gap, so fail loudly and let the standby be
+                 * rebuilt instead of silently corrupting it.
+                 */
+                if (send_point->asn < file->head.asn &&
+                    !(send_point->rst_id < reset_log->rst_id && send_point->asn == reset_log->last_asn)) {
+                    lsnd->notify_repair = lsnd_need_notify_repair(lsnd);
+                    OG_LOG_RUN_ERR("[Log Sender] redo at peer point [%u-%u/%u/%llu] is missing: no online file "
+                                   "holds asn %u (active file asn %u) and it is not archived. The standby cannot "
+                                   "be caught up and must be re-synced (rebuild).",
+                                   send_point->rst_id, send_point->asn, send_point->block_id,
+                                   (uint64)send_point->lfn, send_point->asn, file->head.asn);
+                    return OG_ERROR;
                 }
-                file_id = log_get_id_by_asn(lsnd->session, (uint32)send_point->rst_id,
-                                            send_point->asn, &loading_curr_file);
-                log_unlock_logfile(lsnd->session);
-            }
+                // skip archive log file
+                while (file_id == OG_INVALID_ID32 && send_point->asn < file->head.asn) {
+                    // If is archive log file, just move to next asn until it is an online log file.
+                    if (send_point->rst_id < reset_log->rst_id && send_point->asn == reset_log->last_asn) {
+                        send_point->rst_id++;
+                    }
+                    send_point->asn++;
+                    send_point->block_id = 0;
 
-            if (file_id != OG_INVALID_ID32 && lsnd_read_online_logfile(lsnd, file_id) != OG_SUCCESS) {
-                OG_LOG_RUN_ERR("[Log Sender] failed to read online log file with id %u ", file_id);
-                return OG_ERROR;
+                    if (!log_try_lock_logfile(lsnd->session)) {
+                        return OG_SUCCESS;
+                    }
+                    file_id = log_get_id_by_asn(lsnd->session, (uint32)send_point->rst_id,
+                                                send_point->asn, &loading_curr_file);
+                    log_unlock_logfile(lsnd->session);
+                }
+
+                if (file_id != OG_INVALID_ID32 && lsnd_read_online_logfile(lsnd, file_id) != OG_SUCCESS) {
+                    OG_LOG_RUN_ERR("[Log Sender] failed to read online log file with id %u ", file_id);
+                    return OG_ERROR;
+                }
             }
         }
     } else {
@@ -1472,6 +1700,33 @@ static status_t lsnd_query_standby_status(lsnd_t *lsnd)
     req->src_node_id = cluster_repl ? lsnd->session->kernel->id : 0;
     errno_t err = memset_s(req->reserved, sizeof(req->reserved), 0, sizeof(req->reserved));
     knl_securec_check(err);
+    if (cluster_repl) {
+        req->reserved[0] = lsnd->session->kernel->db.ctrl.core.cluster_epoch;
+    }
+    /*
+     * Online node bitmap of the source cluster: the standby uses it to learn
+     * which redo streams actually have a source after a cluster switchover
+     * (the source cluster may run fewer nodes than the logical node_count).
+     * Streams without a source must be excluded from the replay drain barrier.
+     */
+    if (cluster_repl) {
+        cluster_view_t view;
+        uint32 view_retry = 0;
+        /*
+         * The online-node bitmap is only meaningful once the cluster view is
+         * stable; right after startup the view may still report 0.  Retry
+         * briefly (the reform settles within ~1s) so the standby learns the
+         * real source set instead of treating every stream as absent.
+         */
+        do {
+            rc_get_cluster_view(&view, OG_TRUE);
+            if (view.is_stable) {
+                break;
+            }
+            cm_sleep(100);
+        } while (++view_retry < 50);
+        req->reserved[1] = view.bitmap;
+    }
 
     req->log_num = log_ctx->logfile_hwm;
     uint32 offset = sizeof(rep_msg_header_t) + sizeof(rep_query_status_req_t);
@@ -1496,6 +1751,43 @@ static status_t lsnd_query_standby_status(lsnd_t *lsnd)
     return lsnd_wait_query_resp(lsnd);
 }
 
+/* Only cluster senders arm tracking. It stays armed across disconnect, DEFER
+ * and role changes until shutdown, so in-flight redo is never forgotten.
+ * Lock order matches log_flush: flush_lock -> buffer locks (ascending).
+ * Writers release their buffer lock before ever acquiring flush_lock. */
+static void lsnd_enable_drain_tracking(knl_session_t *session)
+{
+    log_context_t *redo = &session->kernel->redo_ctx;
+    if (cm_atomic32_get(&redo->drain_tracking) || ENABLE_PARA_LOG_FLUSH(session)) {
+        return;
+    }
+    cm_spin_lock(&redo->flush_lock, NULL);
+    if (!cm_atomic32_get(&redo->drain_tracking)) {
+        for (uint32 i = 0; i < redo->buf_count; i++) {
+            for (uint32 area = 0; area < OG_LOG_AREA_COUNT; area++) {
+                cm_spin_lock(&redo->bufs[i].members[area].lock, NULL);
+            }
+        }
+        /* Buffered maxima include writers whose slots are still copying.
+         * Seed from redo, not the Lamport clock: idle/nologging clock advances
+         * have nothing to flush and must not pin an idle stream forever. */
+        uint64 written = (uint64)cm_atomic_get((atomic_t *)&redo->flushed_lsn);
+        for (uint32 i = 0; i < redo->buf_count; i++) {
+            for (uint32 area = 0; area < OG_LOG_AREA_COUNT; area++) {
+                written = MAX(written, redo->bufs[i].members[area].lsn);
+            }
+        }
+        redo->write_lsn = written;
+        cm_atomic32_set(&redo->drain_tracking, OG_TRUE);
+        for (uint32 i = redo->buf_count; i > 0; i--) {
+            for (uint32 area = OG_LOG_AREA_COUNT; area > 0; area--) {
+                cm_spin_unlock(&redo->bufs[i - 1].members[area - 1].lock);
+            }
+        }
+    }
+    cm_spin_unlock(&redo->flush_lock);
+}
+
 static status_t lsnd_send_heart_beat(lsnd_t *lsnd)
 {
     rep_msg_header_t rep_msg_header;
@@ -1509,12 +1801,6 @@ static status_t lsnd_send_heart_beat(lsnd_t *lsnd)
         return OG_SUCCESS;
     }
 
-    /*
-     * Drain certificate (redo replay ordering barrier): take the Lamport
-     * clock FIRST, then verify drainage.  drained means all redo with
-     * lsn <= curr_lsn has been flushed to the log file and sent to the
-     * standby, so the standby can safely push its per-stream LSN frontier.
-     */
     knl_instance_t *knl = lsnd->session->kernel;
     if (!DB_IS_CLUSTER(lsnd->session)) {
         /* Preserve the original heartbeat outside dual-cluster replication. */
@@ -1524,15 +1810,93 @@ static status_t lsnd_send_heart_beat(lsnd_t *lsnd)
         return cs_write_stream(&lsnd->pipe, (char *)&rep_msg_header, rep_msg_header.size,
             (int32)cm_atomic_get(&knl->attr.repl_pkg_size));
     }
+    lsnd_enable_drain_tracking(lsnd->session);
     rep_msg_header.size = sizeof(rep_msg_header_t) + sizeof(rep_hb_req_t);
     rep_msg_header.type = REP_HEART_BEAT_REQ;
     lsnd->last_send_time = now;
 
     rep_hb_req_t rep_hb_req;
-    rep_hb_req.curr_lsn = DB_CURR_LSN(lsnd->session);
     rep_hb_req.reserved = 0;
-    rep_hb_req.drained = (knl->redo_ctx.curr_point.lsn >= rep_hb_req.curr_lsn &&
-                          lsnd->send_point.lfn >= knl->redo_ctx.curr_point.lfn) ? OG_TRUE : OG_FALSE;
+    /*
+     * Drain certificate (redo replay ordering barrier).
+     *
+     * The certificate is the pair (C=curr_lsn, drained) promising that no
+     * redo with LSN <= C will ever be produced any more and that every redo
+     * with LSN <= C has already been flushed and sent on this stream; the
+     * standby uses it to push the per-stream LSN frontier that gates
+     * cross-node replay ordering.
+     *
+     * Construction (red line 1: take C first, then verify drainage):
+     *   1. Snapshot the consistent pair (C, write_lsn) under the plain
+     *      spinlock redo_ctx.drain_lock.  While lsnd holds it, no redo writer
+     *      can be between its DB_INC_LSN and write_lsn update, so the snapshot
+     *      never describes a half-born redo group.  This closes the
+     *      "in-flight redo" race: any redo born after the snapshot gets
+     *      LSN > C (the Lamport clock is strictly increasing), and every redo
+     *      with LSN <= C was allocated before the snapshot, hence its LSN is
+     *      covered by write_lsn.  Writers hold the same spinlock only across
+     *      the two-instruction LSN allocation step (see log_write in
+     *      knl_log.c), so the serialization cost on the write path is
+     *      negligible; lock order is strictly buf->lock -> drain_lock for
+     *      writers and drain_lock only for lsnd, so there is no lock cycle.
+     *   2. Drainage = "redo buffer flushed up to the latest write" AND
+     *      "everything flushed has been sent", all evaluated on monotonic
+     *      watermarks:
+     *        - write_lsn <= flushed_lsn: flushed_lsn is the LSN watermark of
+     *          the last flushed batch; combined with the next condition it
+     *          means no redo group is still in flight (allocated an LSN but
+     *          not yet durable).  In DBStor mode, where batch max LSNs are
+     *          guaranteed to strictly increase across flush generations
+     *          (enforced by the switch-time buffer locks and the
+     *          knl_panic in log_flush), this single comparison already
+     *          implies every redo with LSN <= write_lsn is durable; the
+     *          next guard additionally covers non-DBStor builds where that
+     *          invariant is not enforced.
+     *        - flushed_lfn >= redo_ctx.lfn: every allocated batch has been
+     *          flushed (redo_ctx.lfn is the latest allocated batch lfn, and
+     *          lfns are handed out only when a batch is assembled, i.e. after
+     *          all of its groups have been copied into the redo buffer).  This
+     *          guard is what makes the check independent of the DBStor-mode
+     *          "batch max LSN strictly increases" invariant (knl_log.c
+     *          log_flush): even if a later generation's batch lsn were lower
+     *          than an earlier flushed one, an unflushed batch still fails
+     *          this watermark.
+     *        - send_point.lfn >= flushed_lfn: everything flushed has been
+     *          written to this standby's socket.  The heartbeat is sent after
+     *          the redo batches on the same TCP stream, so the standby
+     *          processes the certificate only after those batches are
+     *          received and flushed on its side (see lrcv_update_frontier).
+     *   3. An idle node generates no redo: write_lsn stays put while dmon
+     *      keeps advancing the Lamport clock, so the flush/send conditions
+     *      hold vacuously, drained stays true and C keeps climbing -- exactly
+     *      what lets an idle stream's frontier advance instead of stalling
+     *      the whole standby replay.  (The old curr_point.lsn >= curr_lsn
+     *      check compared the flushed point against the clock and pinned an
+     *      idle node at drained=false forever.)
+     *
+     * Memory ordering (aarch64): write_lsn is always read/written inside the
+     * drain_lock critical section, whose cm_spin_lock/cm_spin_unlock are a
+     * seq_cst CAS (acquire) and seq_cst store (release), so the (C, write_lsn)
+     * snapshot is strictly ordered.  The remaining cross-thread fields here
+     * are read with seq_cst atomics: lgwr publishes flushed_lsn/flushed_lfn
+     * with seq_cst stores only after the disk write completes, and redo_ctx.lfn
+     * is published with a seq_cst RMW when a batch is assembled.  This keeps
+     * the whole certificate strictly ordered without taking redo_ctx.flush_lock.
+     * flushed_lsn/flushed_lfn/redo_ctx.lfn/send_point are monotonic watermarks,
+     * so reading them after releasing the spinlock is safe: the promise is
+     * evaluated at this point in time and a later-read watermark can only be
+     * larger (more flushed/sent), never smaller.
+     */
+    cm_spin_lock(&knl->redo_ctx.drain_lock, NULL);
+    rep_hb_req.curr_lsn = DB_CURR_LSN(lsnd->session);
+    uint64 write_lsn = knl->redo_ctx.write_lsn;
+    cm_spin_unlock(&knl->redo_ctx.drain_lock);
+
+    uint64 flushed_lsn = (uint64)cm_atomic_get((atomic_t *)&knl->redo_ctx.flushed_lsn);
+    uint64 flushed_lfn = (uint64)cm_atomic_get((atomic_t *)&knl->redo_ctx.flushed_lfn);
+    uint64 alloc_lfn = (uint64)cm_atomic_get((atomic_t *)&knl->redo_ctx.lfn);
+    rep_hb_req.drained = (write_lsn <= flushed_lsn && flushed_lfn >= alloc_lfn &&
+                          lsnd->send_point.lfn >= flushed_lfn) ? OG_TRUE : OG_FALSE;
 
     /* send the 8-byte header, then the 16-byte drain-certificate payload */
     status_t status = cs_write_stream(&lsnd->pipe, (char *)&rep_msg_header, sizeof(rep_msg_header_t),
@@ -1682,6 +2046,8 @@ static void lsnd_proc(thread_t *thread)
                     continue;
                 }
 
+                lsnd_try_exit_catchup(lsnd);
+
                 // Send log to standby
                 if (lsnd_send_log(lsnd, &sent) != OG_SUCCESS) {
                     lsnd_set_conn_error(lsnd);
@@ -1694,9 +2060,16 @@ static void lsnd_proc(thread_t *thread)
                     continue;
                 }
 
-                // If log sender is not waiting for a response
-                if (!sent && ((uint64)knl->lfn == lsnd->peer_flush_point.lfn ||
-                              knl->redo_ctx.curr_point.lfn == lsnd->peer_flush_point.lfn)) {
+                /*
+                 * Wait when nothing was sent and the send point has caught up
+                 * with the current write point.  The old check compared the
+                 * local LFN with the standby's reported flush point: when the
+                 * standby's flush point is stale (e.g. its receiver is briefly
+                 * stuck), the equality never holds even though this sender has
+                 * already delivered everything, and the loop spins in a
+                 * 0-timeout poll instead of sleeping.
+                 */
+                if (!sent && log_cmp_point(&lsnd->send_point, &knl->redo_ctx.curr_point) >= 0) {
                     (void)cm_wait_cond(&lsnd->cond, knl->attr.lsnd_wait_time);
                 }
             }
@@ -1979,6 +2352,7 @@ status_t lsnd_init(knl_session_t *session)
     knl_session_t *lsnd_session = session->kernel->sessions[SESSION_ID_LSND];
     knl_attr_t *attr = &session->kernel->attr;
     lsnd_context_t *ogx = &lsnd_session->kernel->lsnd_ctx;
+    lrcv_context_t *lrcv = NULL;
 
     if (DB_IS_RAFT_ENABLED(session->kernel)) {
         OG_LOG_RUN_WAR("RAFT: skip init log sender thread when raft is enabled.");
@@ -1994,7 +2368,7 @@ status_t lsnd_init(knl_session_t *session)
         uint32 begin_time = attr->timer->systime;
         uint32 timeout = attr->repl_wait_timeout * REPL_WAIT_MULTI;
 
-        while (session->kernel->lrcv_mgr.streams[0].session == NULL) {
+        while ((lrcv = lrcv_get_local_stream(session)) == NULL || lrcv->session == NULL) {
             if (attr->timer->systime - begin_time >= timeout) {
                 OG_LOG_RUN_WAR("primary has not connected here in %us, promote failed probably", timeout);
                 break;
@@ -2150,7 +2524,8 @@ static void lsnd_set_tmp_async(lsnd_t *lsnd, degrade_type_t type)
 
 static inline bool32 lsnd_need_flush(lsnd_t *lsnd)
 {
-    return (bool32)(!lsnd->flush_completed &&
+    return (bool32)(!lsnd->catchup_mode &&
+                    !lsnd->flush_completed &&
                     lsnd->status > LSND_STATUS_QUERYING &&
                     lsnd->dest_info.sync_mode == LOG_NET_TRANS_MODE_SYNC);
 }
@@ -2164,6 +2539,10 @@ static bool32 lsnd_copy_batch(lsnd_t *lsnd, log_batch_t *batch, log_file_t *file
     log_context_t *redo_ctx = &lsnd->session->kernel->redo_ctx;
     log_batch_tail_t *tail = (log_batch_tail_t *)((char *)batch + batch->size - sizeof(log_batch_tail_t));
     errno_t err;
+
+    if (lsnd->catchup_mode) {
+        return OG_FALSE;
+    }
 
     cm_spin_lock(&lsnd->lock, NULL);
     if (lsnd->send_buf.write_pos == lsnd->send_buf.read_pos) {
@@ -2196,6 +2575,8 @@ static bool32 lsnd_copy_batch(lsnd_t *lsnd, log_batch_t *batch, log_file_t *file
     rep_batch_req->curr_point = redo_ctx->curr_point;
     rep_batch_req->scn = batch->scn;
     rep_batch_req->compress_alg = lsnd->dest_info.compress_alg;
+    rep_batch_req->src_dbid = lsnd->session->kernel->db.ctrl.core.dbid;
+    rep_batch_req->src_node_id = lsnd->session->kernel->id;
     offset += sizeof(rep_batch_req_t);
 
     err = memcpy_sp(lsnd->send_buf.read_buf.aligned_buf + offset, (uint32)lsnd->send_buf.read_buf.buf_size - offset,

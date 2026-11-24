@@ -133,6 +133,13 @@ typedef struct st_lsnd {
     volatile bool32 is_disable;
     log_point_t wait_point;
     bool32 notify_repair; // if true, primary will notify standby to set need repair
+    bool32 cluster_switch; // this lsnd carries the cluster switchover handshake
+    /*
+     * Gap catch-up mode: after connect the sender must read historical redo from
+     * log files/archives until send_point reaches curr_point.  While active,
+     * SYNC copy_batch is disabled so live tail cannot jump ahead of history.
+     */
+    bool32 catchup_mode;
 } lsnd_t;
 
 typedef struct st_lsnd_context {

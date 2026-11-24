@@ -32,12 +32,13 @@
 #include "dtc_database.h"
 #include "rc_reform.h"
 
-static void bak_set_build_params(bak_t *bak, cs_pipe_t *pipe, cs_packet_t *send_pack, cs_packet_t *recv_pack,
-                                 build_param_ctrl_t *ctrl)
+static status_t bak_set_build_params(bak_t *bak, cs_pipe_t *pipe, cs_packet_t *send_pack, cs_packet_t *recv_pack,
+                                     build_param_ctrl_t *ctrl)
 {
     bak_remote_t *remote = &bak->remote;
     bak_attr_t *attr = &bak->record.attr;
     char ipstr[CM_MAX_IP_LEN];
+    errno_t ret;
 
     bak->record.start_time = (uint64)cm_now();
     bak->is_building = OG_TRUE;
@@ -60,26 +61,49 @@ static void bak_set_build_params(bak_t *bak, cs_pipe_t *pipe, cs_packet_t *send_
     bak->proc_count = ctrl->parallelism;
     bak->backup_buf_size = ctrl->buffer_size;
 
+    /*
+     * The peer node's archived logs are backed up in parallel and each one is
+     * spooled into a local .bak file under record.path (bak_paral_create_bakfile).
+     * Without a valid path the generated name becomes "/arch_%u_%u_0.bak" at the
+     * filesystem root and creation fails with EACCES; this is exactly what was
+     * observed on BUILD STANDBY with a 2-node primary. Use the same default
+     * backupset location as a normal disk backup.
+     */
+    ret = sprintf_s(bak->record.path, OG_MAX_BACKUP_PATH_LEN, DEFAULT_BAKCUPFILE_FORMAT,
+                    bak->kernel->home, bak->record.start_time);
+    knl_securec_check_ss(ret);
+    if (cm_create_device_dir_ex(cm_device_type(bak->record.path), bak->record.path) != OG_SUCCESS) {
+        OG_LOG_RUN_ERR("[BUILD] failed to create build backup path %s", bak->record.path);
+        return OG_ERROR;
+    }
+
     remote->pipe = pipe;
     remote->send_pack = send_pack;
     remote->recv_pack = recv_pack;
 
-    errno_t ret = strncpy_s(bak->peer_host, OG_HOST_NAME_BUFFER_SIZE, cm_inet_ntop(
+    ret = strncpy_s(bak->peer_host, OG_HOST_NAME_BUFFER_SIZE, cm_inet_ntop(
         (struct sockaddr *)&pipe->link.tcp.remote.addr, ipstr, CM_MAX_IP_LEN), OG_HOST_NAME_BUFFER_SIZE - 1);
     knl_securec_check(ret);
 
     OG_LOG_RUN_INF("[BUILD] is increment %u, base lsn %llu ", ctrl->is_increment, ctrl->base_lsn);
+    return OG_SUCCESS;
 }
 
 bool32 knl_brain_repair_check(knl_session_t *session)
 {
-    reset_log_t *reset_log = &session->kernel->lrcv_mgr.streams[0].primary_resetlog;
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
     log_point_t *rcy = &dtc_my_ctrl(session)->rcy_point;
 
-    if ((kernel->lrcv_mgr.streams[0].dbid != 0) && (kernel->lrcv_mgr.streams[0].dbid != kernel->db.ctrl.core.dbid)) {
+    if (lrcv == NULL) {
+        OG_THROW_ERROR(ERR_PRI_NOT_CONNECT, "primary info");
+        return OG_FALSE;
+    }
+    reset_log_t *reset_log = &lrcv->primary_resetlog;
+
+    if ((lrcv->dbid != 0) && (lrcv->dbid != kernel->db.ctrl.core.dbid)) {
         OG_LOG_RUN_ERR("[REPAIR] primary dbid [%u] is not equal to standby dbid [%u], need repair",
-            kernel->lrcv_mgr.streams[0].dbid, kernel->db.ctrl.core.dbid);
+            lrcv->dbid, kernel->db.ctrl.core.dbid);
         OG_THROW_ERROR(ERR_INVALID_OPERATION, ", primary dbid is not equal to standby dbid.");
         return OG_FALSE;
     }
@@ -275,14 +299,25 @@ static status_t build_find_batch(knl_session_t *session, device_type_t type, int
     uint64 size;
     uint64 remain_size;
     uint64 buf_size = (uint64)align_buf->buf_size;
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
     bool32 finished = OG_FALSE;
     log_batch_t *batch = NULL;
     log_batch_tail_t *tail = NULL;
     char *buf = align_buf->aligned_buf;
     uint64 last_lfn = 0;
 
-    int64 file_size = cm_file_size(*handle);
-    if (file_size == -1) {
+    if (lrcv == NULL) {
+        OG_THROW_ERROR(ERR_PRI_NOT_CONNECT, "primary info");
+        return OG_ERROR;
+    }
+
+    /*
+     * handle may be a remote DSS/RAW device on a cluster standby; query the
+     * size through the device layer instead of a local lseek64, which always
+     * fails (EBADF) on a remote handle.
+     */
+    int64 file_size = -1;
+    if (cm_get_size_device(type, *handle, &file_size) != OG_SUCCESS || file_size == -1) {
         OG_LOG_RUN_ERR("[BUILD] failed to get log [%u-%u] size ", point->rst_id, point->asn);
         OG_THROW_ERROR(ERR_SEEK_FILE, 0, SEEK_END, errno);
         return OG_ERROR;
@@ -319,14 +354,13 @@ static status_t build_find_batch(knl_session_t *session, device_type_t type, int
             last_lfn = batch->head.point.lfn;
             if (batch->head.point.lfn == point->lfn) {
                 finished = OG_TRUE;
-                if (session->kernel->lrcv_mgr.streams[0].primary_reset_log_scn == batch->scn ||
-                    session->kernel->lrcv_mgr.streams[0].primary_reset_log_scn == 0) {
+                if (lrcv->primary_reset_log_scn == batch->scn || lrcv->primary_reset_log_scn == 0) {
                     *data_size = batch->size;
                 } else {
                     *data_size = 0;
                     OG_LOG_RUN_ERR("[BUILD] For same lfn [%llu] in resetlog, scn from primary and standby [%llu/%llu] "
                                    "is different, break-brain build is not allowed", (uint64)point->lfn,
-                                   session->kernel->lrcv_mgr.streams[0].primary_reset_log_scn, batch->scn);
+                                   lrcv->primary_reset_log_scn, batch->scn);
                 }
                 break;
             }
@@ -1004,7 +1038,12 @@ static status_t build_analyze_redo(knl_session_t *session, log_point_t *curr_poi
 
 static status_t build_repair_prepare(knl_session_t *session, uint64 *base_lsn)
 {
-    reset_log_t resetlog = session->kernel->lrcv_mgr.streams[0].primary_resetlog;
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
+    if (lrcv == NULL) {
+        OG_THROW_ERROR(ERR_PRI_NOT_CONNECT, "primary info");
+        return OG_ERROR;
+    }
+    reset_log_t resetlog = lrcv->primary_resetlog;
     aligned_buf_t log_buf = session->kernel->backup_ctx.bak.log_buf;
     log_point_t target_point;
     uint32 data_size = 0;
@@ -1580,17 +1619,23 @@ static status_t bak_agent_send_diff_pages(knl_session_t *session)
     return OG_SUCCESS;
 }
 
-inline static void bak_brain_close_file(int32 *handle, uint32 count)
+inline static void bak_brain_close_file(device_type_t *types, int32 *handle, uint32 count)
 {
     for (uint32 i = 0; i < count; i++) {
-        cm_close_file(handle[i]);
+        if (handle[i] != OG_INVALID_HANDLE) {
+            cm_close_device(types[i], &handle[i]);
+        }
     }
 }
 
 static status_t bak_brain_reset_page(knl_session_t *session)
 {
     int32 handles[OG_MAX_DATA_FILES];
+    device_type_t handle_types[OG_MAX_DATA_FILES];
     errno_t ret = memset_sp(handles, OG_MAX_DATA_FILES * sizeof(int32), -1, OG_MAX_DATA_FILES * sizeof(int32));
+    knl_securec_check(ret);
+    ret = memset_sp(handle_types, OG_MAX_DATA_FILES * sizeof(device_type_t), 0,
+                    OG_MAX_DATA_FILES * sizeof(device_type_t));
     knl_securec_check(ret);
     build_analyse_item_t *item = NULL;
     bak_t *bak = &session->kernel->backup_ctx.bak;
@@ -1610,11 +1655,12 @@ static status_t bak_brain_reset_page(knl_session_t *session)
             OG_LOG_RUN_ERR("[REPAIR] failed to open datafile %s", df->ctrl->name);
             return OG_ERROR;
         }
+        handle_types[item->page_id->file] = df->ctrl->type;
         int64 offset = (int64)item->page_id->page * DEFAULT_PAGE_SIZE(session);
         if (cm_write_device(df->ctrl->type, handles[item->page_id->file], offset, buf, DEFAULT_PAGE_SIZE(session)) !=
             OG_SUCCESS) {
             OG_LOG_RUN_ERR("[REPAIR] failed to write datafile %s", df->ctrl->name);
-            bak_brain_close_file(handles, OG_MAX_DATA_FILES);
+            bak_brain_close_file(handle_types, handles, OG_MAX_DATA_FILES);
             return OG_ERROR;
         }
         OG_LOG_DEBUG_INF("[REPAIR] brain reset page %u-%u", item->page_id->file, item->page_id->page);
@@ -1626,13 +1672,13 @@ static status_t bak_brain_reset_page(knl_session_t *session)
             continue;
         }
         if (db_fdatasync_file(session, handles[i]) != OG_SUCCESS) {
-            bak_brain_close_file(handles, OG_MAX_DATA_FILES);
+            bak_brain_close_file(handle_types, handles, OG_MAX_DATA_FILES);
             OG_LOG_RUN_ERR("[REPAIR] failed to fdatasync datafile");
             return OG_ERROR;
         }
     }
 
-    bak_brain_close_file(handles, OG_MAX_DATA_FILES);
+    bak_brain_close_file(handle_types, handles, OG_MAX_DATA_FILES);
     return OG_SUCCESS;
 }
 
@@ -1768,7 +1814,7 @@ static status_t bak_build_prepare_attr(knl_session_t *session, build_param_ctrl_
 status_t bak_build_restore(knl_session_t *session, build_param_ctrl_t *ctrl)
 {
     bak_context_t *ogx = &session->kernel->backup_ctx;
-    lrcv_context_t *lrcv_ctx = &session->kernel->lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv_ctx = lrcv_get_local_stream(session);
     bak_t *bak = &ogx->bak;
 
     OG_LOG_RUN_INF("[BUILD] build start, compress method %s, compress level %u, is increment %u, is repair %u, "
@@ -1776,7 +1822,7 @@ status_t bak_build_restore(knl_session_t *session, build_param_ctrl_t *ctrl)
                    ctrl->is_repair, ctrl->buffer_size / SIZE_M(1));
     bak->need_retry = OG_FALSE;
 
-    if (lrcv_ctx->thread.closed) {
+    if (!DB_ATTR_CLUSTER(session) && (lrcv_ctx == NULL || lrcv_ctx->thread.closed)) {
         OG_THROW_ERROR(ERR_LRCV_NOT_READY);
         return OG_ERROR;
     }
@@ -1997,7 +2043,11 @@ status_t bak_build_backup(knl_session_t *session, cs_pipe_t *pipe, cs_packet_t *
         return OG_ERROR;
     }
 
-    bak_set_build_params(&ogx->bak, pipe, send_pack, recv_pack, &ctrl);
+    if (bak_set_build_params(&ogx->bak, pipe, send_pack, recv_pack, &ctrl) != OG_SUCCESS) {
+        bak_unset_build_running(session, ogx);
+        bak_send_error(bak, pipe, (int32)cm_atomic_get(&session->kernel->attr.repl_pkg_size));
+        return OG_ERROR;
+    }
 
     if (bak_set_break_point_params(session, ogx, &build_progress) != OG_SUCCESS) {
         bak_unset_build_running(session, ogx);
