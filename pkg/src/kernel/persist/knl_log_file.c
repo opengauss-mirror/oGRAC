@@ -529,7 +529,7 @@ void rd_alter_drop_logfile(knl_session_t *session, log_entry_t *log)
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
     log_context_t *ogx = &kernel->redo_ctx;
     rmon_t *rmon_ctx = &kernel->rmon_ctx;
-    lrcv_context_t *lrcv = &kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &kernel->lrcv_mgr.streams[0];
     errno_t err;
     logfile_set_t *logfile_set = MY_LOGFILE_SET(session);
     knl_panic(!DB_IS_CLUSTER(session));

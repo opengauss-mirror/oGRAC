@@ -92,7 +92,7 @@ status_t db_alter_convert_to_standby(knl_session_t *session, knl_alterdb_def_t *
         db->ctrl.core.db_role = REPL_ROLE_PHYSICAL_STANDBY;
     }
 
-    kernel->lrcv_ctx.reconnected = OG_FALSE;
+    kernel->lrcv_mgr.streams[0].reconnected = OG_FALSE;
 
     if (def->is_mount) {
         if (db_save_core_ctrl(session) != OG_SUCCESS) {
@@ -648,7 +648,7 @@ status_t db_alter_failover(knl_session_t *session, knl_alterdb_def_t *def)
     log_context_t *redo_ctx = &kernel->redo_ctx;
     switch_ctrl_t *ctrl = &kernel->switch_ctrl;
     database_t *db = &kernel->db;
-    lrcv_context_t *lrcv = &kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &kernel->lrcv_mgr.streams[0];
 
     if (db_alter_failover_check(session, def) != OG_SUCCESS) {
         return OG_ERROR;
@@ -749,7 +749,7 @@ static status_t db_notify_lrcv_switchover(knl_session_t *session, lrcv_context_t
 
 static bool32 db_switchover_timeout_check(knl_session_t *session, knl_alterdb_def_t *def, date_t begin_time)
 {
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
 
     if (def->switchover_timeout == 0) {
         return OG_FALSE;
@@ -800,7 +800,7 @@ status_t db_alter_switchover(knl_session_t *session, knl_alterdb_def_t *def)
 {
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
     switch_ctrl_t *ctrl = &kernel->switch_ctrl;
-    lrcv_context_t *lrcv = &kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &kernel->lrcv_mgr.streams[0];
     database_t *db = &kernel->db;
     date_t begin_time = g_timer()->now;
 

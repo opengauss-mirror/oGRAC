@@ -2887,7 +2887,7 @@ static managed_standby_row_t g_managed_standby_rows[] = {
 
 static char *vm_get_lrcv_status(knl_session_t *session)
 {
-    lrcv_context_t *lrcv_ctx = &((knl_session_t *)session)->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv_ctx = &((knl_session_t *)session)->kernel->lrcv_mgr.streams[0];
     log_context_t *redo_ctx = &((knl_session_t *)session)->kernel->redo_ctx;
 
     if (lrcv_ctx->status < LRCV_PREPARE) {
@@ -2911,7 +2911,7 @@ static void vw_managed_standby_parameter_fetch(knl_handle_t session)
 {
     knl_session_t *se = (knl_session_t *)session;
 
-    if (se->kernel->lrcv_ctx.thread.closed) {
+    if (se->kernel->lrcv_mgr.streams[0].thread.closed) {
         PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[0].status, OG_DYNVIEW_NORMAL_LEN,
             OG_DYNVIEW_NORMAL_LEN - 1, "%s", "UNUSED"));
         g_managed_standby_rows[0].rst_id = OG_INVALID_ASN;
@@ -2920,22 +2920,22 @@ static void vw_managed_standby_parameter_fetch(knl_handle_t session)
     } else {
         PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[0].status, OG_DYNVIEW_NORMAL_LEN,
             OG_DYNVIEW_NORMAL_LEN - 1, "%s", vm_get_lrcv_status(se)));
-        g_managed_standby_rows[0].rst_id = (uint32)se->kernel->lrcv_ctx.flush_point.rst_id;
+        g_managed_standby_rows[0].rst_id = (uint32)se->kernel->lrcv_mgr.streams[0].flush_point.rst_id;
         PRTS_RETVOID_IFERR(sprintf_s(g_managed_standby_rows[0].thread_id, OG_DYNVIEW_NORMAL_LEN, "%llx",
-            (uint64)se->kernel->lrcv_ctx.thread.id));
-        g_managed_standby_rows[0].asn = se->kernel->lrcv_ctx.flush_point.asn;
+            (uint64)se->kernel->lrcv_mgr.streams[0].thread.id));
+        g_managed_standby_rows[0].asn = se->kernel->lrcv_mgr.streams[0].flush_point.asn;
     }
 
     g_managed_standby_rows[0].replay_point[0] = '\0';
     PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[0].flush_point, sizeof(g_managed_standby_rows[0].flush_point),
-        sizeof(g_managed_standby_rows[0].flush_point) - 1, "%llu-%u/%u/%llu", se->kernel->lrcv_ctx.flush_point.rst_id,
-        se->kernel->lrcv_ctx.flush_point.asn, se->kernel->lrcv_ctx.flush_point.block_id,
-        (uint64)se->kernel->lrcv_ctx.flush_point.lfn));
+        sizeof(g_managed_standby_rows[0].flush_point) - 1, "%llu-%u/%u/%llu", se->kernel->lrcv_mgr.streams[0].flush_point.rst_id,
+        se->kernel->lrcv_mgr.streams[0].flush_point.asn, se->kernel->lrcv_mgr.streams[0].flush_point.block_id,
+        (uint64)se->kernel->lrcv_mgr.streams[0].flush_point.lfn));
 
     PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[0].primary_curr_point,
         sizeof(g_managed_standby_rows[0].primary_curr_point), sizeof(g_managed_standby_rows[0].primary_curr_point) - 1,
-        "%llu-%u/%u/%llu", se->kernel->lrcv_ctx.primary_curr_point.rst_id, se->kernel->lrcv_ctx.primary_curr_point.asn,
-        se->kernel->lrcv_ctx.primary_curr_point.block_id, (uint64)se->kernel->lrcv_ctx.primary_curr_point.lfn));
+        "%llu-%u/%u/%llu", se->kernel->lrcv_mgr.streams[0].primary_curr_point.rst_id, se->kernel->lrcv_mgr.streams[0].primary_curr_point.asn,
+        se->kernel->lrcv_mgr.streams[0].primary_curr_point.block_id, (uint64)se->kernel->lrcv_mgr.streams[0].primary_curr_point.lfn));
 
     if (se->kernel->lrpl_ctx.thread.closed) {
         PRTS_RETVOID_IFERR(snprintf_s(g_managed_standby_rows[1].status, OG_DYNVIEW_NORMAL_LEN,
@@ -3837,7 +3837,7 @@ static status_t vw_instance_fetch(knl_handle_t se, knl_cursor_t *cursor)
     (void)row_put_int64(&row, (int64)kernel->db_startup_time);
     (void)row_put_str(&row, cm_sys_host_name());
     (void)row_put_str(&row, cm_sys_platform_name());
-    (void)row_put_str(&row, (kernel->lrcv_ctx.session == NULL) ? "DISCONNECTED" : "CONNECTED");
+    (void)row_put_str(&row, (kernel->lrcv_mgr.streams[0].session == NULL) ? "DISCONNECTED" : "CONNECTED");
 
     cm_decode_row((char *)cursor->row, cursor->offsets, cursor->lens, &cursor->data_size);
     cursor->rowid.vmid++;

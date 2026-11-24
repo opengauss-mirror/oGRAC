@@ -35,6 +35,30 @@ extern "C" {
 #define SGA_PAD(buf_size, page_size) ((buf_size) + CM_ALIGN8(((buf_size) / (page_size)) * sizeof(uint32)))
 #define QUICK_CKPT_GROUP_COUNT 2
 
+static status_t srv_check_primary_repl_addr(const char *addr)
+{
+    text_t text;
+    text_t host_part;
+    text_t port_part;
+    uint16 port;
+
+    cm_str2text((char *)addr, &text);
+    if (!cm_split_rtext(&text, ':', '\0', &host_part, &port_part) || host_part.len == 0 || port_part.len == 0) {
+        return OG_ERROR;
+    }
+
+    if (cm_text2uint16(&port_part, &port) != OG_SUCCESS) {
+        cm_reset_error();
+        return OG_ERROR;
+    }
+
+    if (port < OG_MIN_PORT) {
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
 static status_t srv_get_page_size_param(knl_attr_t *attr)
 {
     OG_RETURN_IFERR(srv_get_param_size_uint32("PAGE_SIZE", &attr->page_size));
@@ -498,6 +522,21 @@ static status_t srv_get_ha_params(knl_attr_t *attr)
     if (!attr->repl_auth && attr->repl_scram_auth) {
         OG_LOG_RUN_INF("REPL_AUTH is false, set REPL_SCRAM_AUTH to true will not work. "
             "If it is running in standalone mode, please ignore this item");
+    }
+
+    const char *pri_addr = srv_get_param("PRIMARY_REPL_ADDR");
+    attr->primary_repl_addr[0] = '\0';
+    if (strlen(pri_addr) > 0) {
+        if (strlen(pri_addr) >= sizeof(attr->primary_repl_addr) ||
+            srv_check_primary_repl_addr(pri_addr) != OG_SUCCESS) {
+            OG_THROW_ERROR(ERR_INVALID_PARAMETER, "PRIMARY_REPL_ADDR");
+            return OG_ERROR;
+        }
+        errcode = strncpy_s(attr->primary_repl_addr, sizeof(attr->primary_repl_addr), pri_addr, strlen(pri_addr));
+        if (errcode != EOK) {
+            OG_THROW_ERROR(ERR_SYSTEM_CALL, (errcode));
+            return OG_ERROR;
+        }
     }
 
     const char *value = srv_get_param("REPL_TRUST_HOST");

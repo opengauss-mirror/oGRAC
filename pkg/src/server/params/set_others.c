@@ -586,6 +586,57 @@ status_t sql_verify_als_repl_port(void *se, void *lex, void *def)
     return OG_SUCCESS;
 }
 
+status_t sql_verify_als_primary_repl_addr(void *se, void *lex, void *def)
+{
+    word_t word;
+    text_t text;
+    text_t host_part;
+    text_t port_part;
+    uint16 port;
+    knl_alter_sys_def_t *sys_def = (knl_alter_sys_def_t *)def;
+
+    if (lex_expected_fetch((lex_t *)lex, &word) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
+    if (word.type == WORD_TYPE_STRING) {
+        sql_remove_quota(&word.text.value);
+        cm_trim_text(&word.text.value);
+    }
+
+    if (word.type == WORD_TYPE_DQ_STRING) {
+        cm_trim_text(&word.text.value);
+    }
+
+    if (word.text.len == 0) {
+        // empty means not configured, the standby falls back to learned primary info
+        sys_def->value[0] = '\0';
+        return OG_SUCCESS;
+    }
+
+    OG_RETURN_IFERR(cm_text2str((text_t *)&word.text, sys_def->value, OG_PARAM_BUFFER_SIZE));
+
+    /* check if the host:port specified is valid */
+    cm_str2text(sys_def->value, &text);
+    if (!cm_split_rtext(&text, ':', '\0', &host_part, &port_part) || host_part.len == 0 || port_part.len == 0) {
+        OG_SRC_THROW_ERROR(((lex_t *)lex)->loc, ERR_INVALID_PARAMETER, "PRIMARY_REPL_ADDR");
+        return OG_ERROR;
+    }
+
+    if (cm_text2uint16(&port_part, &port) != OG_SUCCESS) {
+        cm_reset_error();
+        OG_SRC_THROW_ERROR(((lex_t *)lex)->loc, ERR_INVALID_PARAMETER, "PRIMARY_REPL_ADDR");
+        return OG_ERROR;
+    }
+
+    if (port < OG_MIN_PORT) {
+        OG_SRC_THROW_ERROR(((lex_t *)lex)->loc, ERR_PARAMETER_TOO_SMALL, "port", (int64)OG_MIN_PORT);
+        return OG_ERROR;
+    }
+
+    return OG_SUCCESS;
+}
+
 status_t sql_verify_als_rbp_ip(void *se, void *lex, void *def)
 {
     word_t word;

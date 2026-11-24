@@ -55,6 +55,7 @@ extern "C" {
 
 static status_t db_start_daemon(knl_session_t *session);
 static char *db_get_role(database_t *db);
+static void db_wait_repl_ready(knl_session_t *session);
 
 uint32 g_local_inst_id = OG_INVALID_ID32;
 bool8 g_local_set_disaster_cluster_role = OG_FALSE;
@@ -924,6 +925,12 @@ static status_t db_switchover_proc_init(knl_session_t *session)
     }
 
     if (DB_IS_PRIMARY(db) || DB_IS_PHYSICAL_STANDBY(db)) {
+        /*
+         * N-to-M redo replication: every primary cluster node pushes its own
+         * redo stream to the standby cluster (each stream is identified by the
+         * source node id), so log senders are started on every node, not only
+         * on the reform master.
+         */
         if (lsnd_init(session) != OG_SUCCESS) {
             return OG_ERROR;
         }
@@ -1248,7 +1255,7 @@ static status_t db_recovery_to_initphase2(knl_session_t *session, bool32 has_off
         return OG_ERROR;
     }
 
-    if (kernel->lrcv_ctx.is_building) {
+    if (kernel->lrcv_mgr.streams[0].is_building) {
         if (rst_truncate_datafile(session) != OG_SUCCESS) {
             return OG_ERROR;
         }
@@ -1593,8 +1600,14 @@ static void db_build_set_role(database_t *db, build_type_t build_type)
 
 static bool32 db_build_check_peer_role(knl_session_t *session, build_type_t build_type)
 {
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
     uint32 retry_count = OG_BACKUP_RETRY_COUNT;
+
+    // cluster standby build is decoupled from redo transport (build first, configure
+    // LOG_ARCHIVE_DEST_n later), so there is no need to wait for the log shipping handshake
+    if (DB_ATTR_CLUSTER(session)) {
+        return OG_TRUE;
+    }
 
     while (lrcv->peer_role == PEER_UNKNOWN) {
         if (retry_count == 0) {
@@ -1625,6 +1638,19 @@ static status_t db_build_restore_precheck(knl_session_t *session, knl_build_def_
         OG_THROW_ERROR(ERR_INVALID_OPERATION,
                        ",RAFT: build not supported when raft is enabled, please use builddb.sh instead.");
         return OG_ERROR;
+    }
+
+    if (DB_ATTR_CLUSTER(session)) {
+        // cluster build is only supported on standby cluster node 0, full build only
+        if (session->kernel->id != 0) {
+            OG_THROW_ERROR(ERR_INVALID_OPERATION, ",cluster build can only be executed on node 0");
+            return OG_ERROR;
+        }
+        if (def->param_ctrl.is_increment || def->param_ctrl.is_repair) {
+            OG_THROW_ERROR(ERR_INVALID_OPERATION,
+                ",increment or repair build is not supported in cluster mode");
+            return OG_ERROR;
+        }
     }
 
     if (def->param_ctrl.is_increment || def->param_ctrl.is_repair) {
@@ -1659,6 +1685,10 @@ static status_t db_build_restore_precheck(knl_session_t *session, knl_build_def_
         return OG_ERROR;
     }
 
+    OG_LOG_RUN_INF("[DB] build restore precheck passed, clustered:%u, node_id:%u, build_type:%u, increment:%u, "
+                   "repair:%u", DB_ATTR_CLUSTER(session), session->kernel->id, def->build_type,
+                   def->param_ctrl.is_increment, def->param_ctrl.is_repair);
+
     return OG_SUCCESS;
 }
 
@@ -1674,14 +1704,16 @@ static status_t db_build_restore(knl_session_t *session, knl_build_def_t *def)
     }
 
     if (def->build_type != BUILD_AUTO) {
-        session->kernel->lrcv_ctx.role_spec_building = OG_TRUE;
+        session->kernel->lrcv_mgr.streams[0].role_spec_building = OG_TRUE;
     }
 
-    kernel->lrcv_ctx.is_building = OG_TRUE;
+    kernel->lrcv_mgr.streams[0].is_building = OG_TRUE;
     db->status = def->param_ctrl.is_increment || def->param_ctrl.is_repair ? db->status : DB_STATUS_CREATING;
     db->ctrl.core.db_role = REPL_ROLE_PHYSICAL_STANDBY;
     bak->build_retry_time = BAK_BUILD_INIT_RETRY_TIME;
     def->param_ctrl.base_lsn = OG_INVALID_LSN;
+    OG_LOG_RUN_INF("[DB] build restore start, clustered:%u, node_id:%u", DB_ATTR_CLUSTER(session),
+        session->kernel->id);
     do {
         cm_reset_error();
         status = bak_build_restore(session, &def->param_ctrl);
@@ -1690,7 +1722,7 @@ static status_t db_build_restore(knl_session_t *session, knl_build_def_t *def)
 
     if (status != OG_SUCCESS) {
         db->status = DB_STATUS_NOMOUNT;
-        kernel->lrcv_ctx.is_building = OG_FALSE;
+        kernel->lrcv_mgr.streams[0].is_building = OG_FALSE;
         OG_LOG_RUN_ERR("[DB] failed to backup database");
         return OG_ERROR;
     }
@@ -1722,36 +1754,52 @@ status_t db_build_baseline(knl_session_t *session, knl_build_def_t *def)
         CM_ABORT(0, "[DB] ABORT INFO: failed to save core control file when build baseline");
     }
 
+    OG_LOG_RUN_INF("[DB] build baseline ctrl fields, clustered:%u, node_count:%u, db_role:%u, "
+                   "build_completed:%u, log_mode:%u", DB_ATTR_CLUSTER(session), db->ctrl.core.node_count,
+                   db->ctrl.core.db_role, db->ctrl.core.build_completed, db->ctrl.core.log_mode);
+
     if (!def->param_ctrl.is_increment && !def->param_ctrl.is_repair) {
         if (db_mount(session) != OG_SUCCESS) {
-            kernel->lrcv_ctx.is_building = OG_FALSE;
+            kernel->lrcv_mgr.streams[0].is_building = OG_FALSE;
             return OG_ERROR;
         }
     }
 
-    kernel->lrcv_ctx.reconnected = OG_FALSE;
+    kernel->lrcv_mgr.streams[0].reconnected = OG_FALSE;
 
     /*
      * If one node connects to primary and wants to build a cascaded standby, the primary will disconnect
      * with it after build successfully. So in this scenario, there is no need to wait log receiver to become prepared.
      */
-    no_wait = (bool32)(DB_IS_CASCADED_PHYSICAL_STANDBY(db) && kernel->lrcv_ctx.role_spec_building &&
-                       kernel->lrcv_ctx.peer_role == PEER_PRIMARY);
+    no_wait = (bool32)(DB_IS_CASCADED_PHYSICAL_STANDBY(db) && kernel->lrcv_mgr.streams[0].role_spec_building &&
+                       kernel->lrcv_mgr.streams[0].peer_role == PEER_PRIMARY);
 
     db_open_opt_t open_options = { OG_FALSE,      OG_FALSE, OG_FALSE, OG_FALSE, OG_TRUE, DB_OPEN_STATUS_NORMAL,
                                    OG_INVALID_LFN };
     if (db_open(session, &open_options) != OG_SUCCESS) {
-        kernel->lrcv_ctx.is_building = OG_FALSE;
+        kernel->lrcv_mgr.streams[0].is_building = OG_FALSE;
         return OG_ERROR;
     }
 
     if (!no_wait) {
-        lrcv_wait_status_prepared(session);
+        db_wait_repl_ready(session);
     }
 
-    kernel->lrcv_ctx.is_building = OG_FALSE;
+    kernel->lrcv_mgr.streams[0].is_building = OG_FALSE;
     OG_LOG_RUN_INF("database build successfully");
     return OG_SUCCESS;
+}
+
+static void db_wait_repl_ready(knl_session_t *session)
+{
+    if (DB_IS_CLUSTER(session)) {
+        // cluster standby build is decoupled from redo transport (build first, configure
+        // LOG_ARCHIVE_DEST_n later), so do not wait for the log receiver to become prepared
+        OG_LOG_RUN_INF("[DB] cluster standby build finished, skip waiting log receiver prepared");
+        return;
+    }
+
+    lrcv_wait_status_prepared(session);
 }
 
 static char *db_get_role(database_t *db)
@@ -1793,7 +1841,7 @@ char *db_get_condition(knl_session_t *session)
 {
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
     switch_ctrl_t *ctrl = &kernel->switch_ctrl;
-    lrcv_context_t *lrcv = &kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &kernel->lrcv_mgr.streams[0];
     lftc_clt_ctx_t *lftc_clt = &kernel->lftc_client_ctx;
 
     switch (ctrl->request) {
@@ -1831,7 +1879,7 @@ char *db_get_condition(knl_session_t *session)
 char *db_get_needrepair_reason(knl_session_t *session)
 {
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
-    lrcv_context_t *lrcv = &kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &kernel->lrcv_mgr.streams[0];
     lftc_clt_ctx_t *lftc_clt = &kernel->lftc_client_ctx;
 
     if (DB_IS_PRIMARY(&kernel->db)) {

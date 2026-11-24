@@ -46,6 +46,8 @@ config_item_t g_cms_params[] = {
     // comment
     // -------------            --------- --------  ------------ ----- ------------- ----------- -----        --------
     // -----
+    { "_CMS_SKIP_VOTE_RECONNECT", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "-", "OG_TYPE_BOOLEAN", NULL, 0,
+      EFFECT_REBOOT, CFG_INS, NULL, NULL },
     { "NODE_ID", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_INTEGER", NULL, 0, EFFECT_REBOOT, CFG_INS, NULL,
       NULL },
     { "GCC_TYPE", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_STRING", NULL, 0, EFFECT_REBOOT, CFG_INS, NULL,
@@ -561,6 +563,16 @@ status_t cms_load_param(int64 *time_stamp)
         }
 
         g_param.uds_worker_thread_count = (uint32)val_int64;
+    }
+
+    value = cm_get_config_value(&cfg, "_CMS_SKIP_VOTE_RECONNECT");
+    if (value == NULL || cm_strcmpi(value, "FALSE") == 0) {
+        g_param.cms_skip_vote_reconnect = OG_FALSE;
+    } else if (cm_strcmpi(value, "TRUE") == 0) {
+        g_param.cms_skip_vote_reconnect = OG_TRUE;
+    } else {
+        OG_THROW_ERROR(ERR_CTSTORE_INVALID_PARAM, "invalid parameter value of '_CMS_SKIP_VOTE_RECONNECT'");
+        return OG_ERROR;
     }
 
     value = cm_get_config_value(&cfg, "_SPLIT_BRAIN");

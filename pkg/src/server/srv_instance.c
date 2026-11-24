@@ -581,7 +581,7 @@ static void srv_process_demote_request(void)
         return;
     }
 
-    kernel->lrcv_ctx.reconnected = OG_TRUE;
+    kernel->lrcv_mgr.streams[0].reconnected = OG_TRUE;
     db->is_readonly = OG_TRUE;
     db->readonly_reason = PHYSICAL_STANDBY_SET;
     db->ctrl.core.db_role = REPL_ROLE_PHYSICAL_STANDBY;
@@ -779,7 +779,7 @@ static void srv_promote_get_peer_url(promote_record_t *promote_record)
 {
     knl_session_t *session = g_instance->kernel.sessions[SESSION_ID_KERNEL];
     switch_ctrl_t *ctrl = &g_instance->kernel.switch_ctrl;
-    lrcv_context_t *lrcv = &g_instance->kernel.lrcv_ctx;
+    lrcv_context_t *lrcv = &g_instance->kernel.lrcv_mgr.streams[0];
     errno_t err;
 
     err = snprintf_s(promote_record->peer_url, sizeof(promote_record->peer_url), sizeof(promote_record->peer_url) - 1,
@@ -982,7 +982,7 @@ static void srv_process_force_promote_request(void)
     }
     knl_securec_check(err);
 
-    if ((force && kernel->lrcv_ctx.session != NULL) || !cm_spin_try_lock(&db->lock)) {
+    if ((force && kernel->lrcv_mgr.streams[0].session != NULL) || !cm_spin_try_lock(&db->lock)) {
         return;
     }
 
@@ -1388,6 +1388,9 @@ static void srv_process_record_backup_task(void)
     if (cm_current_time() - ogx->keep_live_start_time > build_keep_alive_timeout || ogx->bak.build_stopped) {
         knl_panic(!ogx->bak.need_retry);
         ogx->bak_condition = NOT_RUNNING;
+        // invalidate the break-point context: a standby that resumes with the stale
+        // progress must detect the mismatch and restart the build from scratch
+        ogx->bak.progress.build_progress.start_time = 0;
         OG_LOG_RUN_INF("[BUILD] cancel keep alive condition while reaching timeout "
             "or build cancelled: %u",
             ogx->bak.build_stopped);
@@ -2204,7 +2207,7 @@ status_t srv_stop_all_session(shutdown_context_t *ogx)
             }
 
             // If log receiver thread has been created, need to first stop it.
-            if (session->kernel->lrcv_ctx.session != NULL) {
+            if (session->kernel->lrcv_mgr.streams[0].session != NULL) {
                 lrcv_close(session);
             }
 

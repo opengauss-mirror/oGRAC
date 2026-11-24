@@ -878,7 +878,7 @@ status_t raft_db_start_follower(knl_session_t *session, repl_role_t old_role)
     status_t status;
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
     log_context_t *redo_ctx = &kernel->redo_ctx;
-    lrcv_context_t *lrcv_ctx = &kernel->lrcv_ctx;
+    lrcv_context_t *lrcv_ctx = &kernel->lrcv_mgr.streams[0];
     raft_context_t *raft_ctx = &kernel->raft_ctx;
     lrpl_context_t *lrpl_ctx = &session->kernel->lrpl_ctx;
     uint64 lfn = dtc_my_ctrl(session)->rcy_point.lfn;

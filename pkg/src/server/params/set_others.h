@@ -50,6 +50,7 @@ status_t sql_verify_als_log_archive_max_min(void *se, void *lex, void *def);
 status_t sql_verify_als_quorum_any(void *se, void *lex, void *def);
 status_t sql_verify_als_statistics_level(void *se, void *lex, void *def);
 status_t sql_verify_als_repl_port(void *se, void *lex, void *def);
+status_t sql_verify_als_primary_repl_addr(void *se, void *lex, void *def);
 status_t sql_verify_als_merge_batch_size(void *se, void *lex, void *def);
 status_t sql_verify_als_convert(void *se, void *lex, void *def);
 status_t sql_verify_als_ckpt_wait_timeout(void *se, void *lex, void *def);

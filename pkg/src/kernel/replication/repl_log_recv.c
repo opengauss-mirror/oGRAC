@@ -27,6 +27,7 @@
 #include "cm_file.h"
 #include "knl_context.h"
 #include "knl_abr.h"
+#include "knl_ctrl_restore.h"
 #include "dtc_database.h"
 
 #define SUSPEND_INTERVAL 1000
@@ -62,6 +63,476 @@ static void lrcv_set_conn_err(lrcv_context_t *lrcv)
     lrcv_reset_bak_task(lrcv);
 }
 
+static status_t lrcv_process_heart_beat(lrcv_context_t *lrcv);
+
+/*
+ * ---- per-stream log file group accessors (N-to-M replication) ----
+ *
+ * A standby node accepts one redo stream per source primary node.  Stream
+ * `src_node_id` is stored in the per-node log file group
+ * LOGFILE_SET(session, src_node_id), reusing the cluster per-node
+ * recovery/archiving machinery.  Stream 0 (src_node_id == local node id)
+ * keeps the legacy single-stream behavior and mirrors `redo_ctx`.
+ */
+static inline bool32 lrcv_is_remote_stream(lrcv_context_t *lrcv)
+{
+    return (lrcv->stream_bound && lrcv->src_node_id != lrcv->session->kernel->id);
+}
+
+static inline logfile_set_t *lrcv_get_file_set(lrcv_context_t *lrcv)
+{
+    if (lrcv->stream_bound) {
+        return LOGFILE_SET(lrcv->session, lrcv->src_node_id);
+    }
+    return MY_LOGFILE_SET(lrcv->session);
+}
+
+static inline dtc_node_ctrl_t *lrcv_get_node_ctrl(lrcv_context_t *lrcv)
+{
+    if (lrcv->stream_bound && lrcv->src_node_id < lrcv->session->kernel->db.ctrl.core.node_count) {
+        return dtc_get_ctrl(lrcv->session, lrcv->src_node_id);
+    }
+    return dtc_my_ctrl(lrcv->session);
+}
+
+static inline void lrcv_lock_logfile(lrcv_context_t *lrcv)
+{
+    if (lrcv_is_remote_stream(lrcv)) {
+        cm_spin_lock(&lrcv->stream_lock, NULL);
+    } else {
+        log_lock_logfile(lrcv->session);
+    }
+}
+
+static inline void lrcv_unlock_logfile(lrcv_context_t *lrcv)
+{
+    if (lrcv_is_remote_stream(lrcv)) {
+        cm_spin_unlock(&lrcv->stream_lock);
+    } else {
+        log_unlock_logfile(lrcv->session);
+    }
+}
+
+/* Mirror per-stream file state back to redo_ctx for the local stream. */
+static inline void lrcv_sync_stream_state(lrcv_context_t *lrcv)
+{
+    if (!lrcv->stream_bound || lrcv_is_remote_stream(lrcv)) {
+        return;
+    }
+
+    log_context_t *redo = &lrcv->session->kernel->redo_ctx;
+    redo->curr_file = lrcv->stream_curr_file;
+    redo->active_file = lrcv->stream_active_file;
+    redo->logfile_hwm = lrcv->stream_logfile_hwm;
+    redo->free_size = lrcv->stream_free_size;
+}
+
+static inline uint16 lrcv_get_curr_file(lrcv_context_t *lrcv)
+{
+    if (lrcv->stream_bound) {
+        return lrcv->stream_curr_file;
+    }
+    return lrcv->session->kernel->redo_ctx.curr_file;
+}
+
+/*
+ * whether this stream's log file group is backed by DSS (ulog addressed by
+ * LSN, or raw device that cannot be byte-scanned via lseek); such devices
+ * cannot use log_get_file_offset for write-pos repair.
+ */
+static inline bool32 lrcv_is_dss_log(lrcv_context_t *lrcv)
+{
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
+    if (file_set == NULL || file_set->logfile_hwm == 0 || file_set->items[0].ctrl == NULL) {
+        return OG_FALSE;
+    }
+    return (file_set->items[0].ctrl->type == DEV_TYPE_ULOG ||
+            file_set->items[0].ctrl->type == DEV_TYPE_RAW);
+}
+
+static inline uint16 lrcv_get_active_file(lrcv_context_t *lrcv)
+{
+    if (lrcv->stream_bound) {
+        return lrcv->stream_active_file;
+    }
+    return lrcv->session->kernel->redo_ctx.active_file;
+}
+
+static inline uint32 lrcv_get_logfile_hwm(lrcv_context_t *lrcv)
+{
+    if (lrcv->stream_bound) {
+        return lrcv->stream_logfile_hwm;
+    }
+    return lrcv->session->kernel->redo_ctx.logfile_hwm;
+}
+
+static inline uint64 lrcv_get_free_size(lrcv_context_t *lrcv)
+{
+    if (lrcv->stream_bound) {
+        return lrcv->stream_free_size;
+    }
+    return lrcv->session->kernel->redo_ctx.free_size;
+}
+
+static inline void lrcv_set_free_size(lrcv_context_t *lrcv, uint64 free_size)
+{
+    lrcv->stream_free_size = free_size;
+    if (!lrcv->stream_bound || !lrcv_is_remote_stream(lrcv)) {
+        lrcv->session->kernel->redo_ctx.free_size = free_size;
+    }
+}
+
+static inline void lrcv_get_next_file(lrcv_context_t *lrcv, uint32 *next, bool32 use_curr)
+{
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
+    uint32 hwm = lrcv_get_logfile_hwm(lrcv);
+
+    if (use_curr) {
+        *next = lrcv_get_curr_file(lrcv);
+    }
+
+    for (;;) {
+        CM_CYCLED_MOVE_NEXT(hwm, *next);
+        if (!LOG_IS_DROPPED(file_set->items[*next].ctrl->flg)) {
+            break;
+        }
+    }
+}
+
+/*
+ * Flush a stream log file head using the receiver's own handle (remote
+ * streams must not use the shared log_file_t.handle owned by the archiver /
+ * dtc recovery).  Writes only the head itself, never touching the redo
+ * batches after it.
+ */
+static void lrcv_flush_head(lrcv_context_t *lrcv, log_file_t *file)
+{
+    log_calc_head_checksum(lrcv->session, &file->head);
+    if (DB_IS_RAFT_ENABLED(lrcv->session->kernel)) {
+        raft_log_flush_async_head(&lrcv->session->kernel->raft_ctx, file);
+        return;
+    }
+
+    int32 handle = lrcv_is_remote_stream(lrcv) ? lrcv->stream_handle[file - lrcv->file_set->items] : file->handle;
+    int32 size = (int32)CM_CALC_ALIGN(sizeof(log_file_head_t), FILE_BLOCK_SIZE);
+    if (cm_write_device(file->ctrl->type, handle, 0, &file->head, size) != OG_SUCCESS) {
+        OG_LOG_RUN_WAR("[Log Receiver] failed to flush head of %s", file->ctrl->name);
+    }
+}
+
+static void lrcv_flush_stream_head(lrcv_context_t *lrcv, log_file_t *file)
+{
+    if (lrcv_is_remote_stream(lrcv)) {
+        lrcv_flush_head(lrcv, file);
+    } else {
+        log_flush_head(lrcv->session, file);
+    }
+}
+
+/*
+ * Whether the log switch to (spec_file_id, spec_asn) has to wait: the target
+ * asn maps to a different file id in the local stream file group.
+ */
+static bool32 lrcv_switch_need_wait(lrcv_context_t *lrcv, uint16 spec_file_id, uint32 spec_asn)
+{
+    uint32 curr_asn;
+
+    lrcv_lock_logfile(lrcv);
+    uint32 next_asn = lrcv_get_file_set(lrcv)->items[lrcv_get_curr_file(lrcv)].head.asn;
+    uint32 next_file = lrcv_get_curr_file(lrcv);
+
+    for (;;) {
+        curr_asn = next_asn;
+        lrcv_get_next_file(lrcv, &next_file, OG_FALSE);
+        next_asn = curr_asn + 1;
+
+        if (spec_asn == next_asn && next_file != spec_file_id) {
+            lrcv_unlock_logfile(lrcv);
+            return OG_TRUE;
+        }
+
+        if (spec_file_id == OG_INVALID_FILEID || spec_asn == OG_INVALID_ASN ||
+            (next_file == spec_file_id && next_asn == spec_asn)) {
+            break;
+        }
+    }
+
+    lrcv_unlock_logfile(lrcv);
+    return OG_FALSE;
+}
+
+/* Switch the stream current log file to the next file (mirror of log_switch_file). */
+static status_t lrcv_switch_stream_file(lrcv_context_t *lrcv)
+{
+    knl_session_t *session = lrcv->session;
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
+    reset_log_t resetlog = session->kernel->db.ctrl.core.resetlogs;
+    uint32 next;
+    log_file_t *curr_file = NULL;
+    dtc_node_ctrl_t *node_ctrl = lrcv_get_node_ctrl(lrcv);
+
+    if (file_set->items[0].ctrl->type == DEV_TYPE_ULOG) {
+        curr_file = &file_set->items[lrcv->stream_curr_file];
+        curr_file->head.write_pos = 0;
+        OG_LOG_RUN_INF("[Log Receiver] Succeed to switch logfile active %u current %u for stream %u.",
+                       lrcv->stream_active_file, lrcv->stream_curr_file, lrcv->src_node_id);
+        return OG_SUCCESS;
+    }
+
+    lrcv_get_next_file(lrcv, &next, OG_TRUE);
+    knl_panic_log((next != lrcv->stream_active_file), "failed to switch log file, current file is %u, "
+                  "active file is %u, log free size is %llu, stream is %u",
+                  lrcv->stream_curr_file, lrcv->stream_active_file, lrcv->stream_free_size, lrcv->src_node_id);
+
+    curr_file = &file_set->items[lrcv->stream_curr_file];
+    curr_file->ctrl->status = LOG_FILE_ACTIVE;
+    uint32 asn = curr_file->head.asn;
+    uint32 rst_id = (curr_file->head.asn == resetlog.last_asn) ? resetlog.rst_id : curr_file->head.rst_id;
+    lrcv->stream_free_size -= log_file_freesize(curr_file);
+    lrcv->stream_curr_file = (uint16)next;
+
+    log_file_t *next_file = &file_set->items[next];
+    next_file->arch_pos = 0;
+    next_file->head.write_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), next_file->ctrl->block_size);
+    next_file->head.block_size = next_file->ctrl->block_size;
+    next_file->head.rst_id = rst_id;
+    next_file->head.asn = asn + 1;
+    next_file->head.first = OG_INVALID_ID64;
+    next_file->head.cmp_algorithm = COMPRESS_NONE;
+    next_file->ctrl->status = LOG_FILE_CURRENT;
+    next_file->ctrl->archived = OG_FALSE;
+    lrcv_flush_stream_head(lrcv, next_file);
+
+    node_ctrl->log_last = lrcv->stream_curr_file;
+    if (db_save_log_ctrl(session, lrcv->stream_curr_file, lrcv->src_node_id) != OG_SUCCESS) {
+        CM_ABORT(0, "[Log Receiver] ABORT INFO: save control space file failed when switch stream log file");
+    }
+    if (ctrl_backup_log_ctrl(session, curr_file->ctrl->file_id, lrcv->src_node_id) != OG_SUCCESS) {
+        CM_ABORT(0, "[Log Receiver] ABORT INFO: backup log control info failed when switch stream log file");
+    }
+
+    OG_LOG_RUN_INF("[Log Receiver] Succeed to switch logfile active %u current %u for stream %u.",
+                   lrcv->stream_active_file, lrcv->stream_curr_file, lrcv->src_node_id);
+    lrcv_sync_stream_state(lrcv);
+    return OG_SUCCESS;
+}
+
+/*
+ * Switch the stream log file to (spec_file_id, spec_asn); keep heart beating
+ * while the switch is blocked (current file is the active file).
+ */
+static status_t lrcv_switch_logfile(lrcv_context_t *lrcv, uint16 spec_file_id, uint32 spec_asn)
+{
+    knl_session_t *session = lrcv->session;
+    status_t status;
+    uint32 next;
+    time_t last_send_time = cm_current_time();
+    bool32 need_skip = OG_FALSE;
+
+    lrcv_lock_logfile(lrcv);
+
+    log_file_t *file = &lrcv_get_file_set(lrcv)->items[lrcv->stream_curr_file];
+    if (file->head.write_pos == CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size)) {
+        if (spec_file_id == OG_INVALID_FILEID || spec_asn == OG_INVALID_ASN ||
+            (lrcv->stream_curr_file == spec_file_id && file->head.asn == spec_asn)) {
+            lrcv_unlock_logfile(lrcv);
+            return OG_SUCCESS;
+        }
+
+        need_skip = OG_TRUE;
+        OG_LOG_RUN_INF("[Log Receiver] Switch stream %u log, need to skip file %u asn %u state %d",
+                       lrcv->src_node_id, lrcv->stream_curr_file, file->head.asn, file->ctrl->status);
+    }
+
+    lrcv_unlock_logfile(lrcv);
+
+    for (;;) {
+        lrcv_get_next_file(lrcv, &next, OG_TRUE);
+        while (next == lrcv->stream_active_file) {
+            ckpt_trigger(session, OG_FALSE, CKPT_TRIGGER_INC);
+            cm_sleep(1);
+
+            if (session->killed) {
+                OG_THROW_ERROR(ERR_OPERATION_KILLED);
+                return OG_ERROR;
+            }
+
+            time_t now = cm_current_time();
+            if ((now - last_send_time) >= REPL_HEART_BEAT_CHECK) {
+                if (lrcv_process_heart_beat(lrcv) != OG_SUCCESS) {
+                    OG_THROW_ERROR(ERR_SWITCH_LOGFILE, "the standby failed to send heart beat message to primary");
+                    return OG_ERROR;
+                }
+                last_send_time = now;
+            }
+
+            lrcv_get_next_file(lrcv, &next, OG_TRUE);
+        }
+
+        if (spec_file_id != OG_INVALID_FILEID && spec_asn != OG_INVALID_ASN) {
+            log_file_t *curr = &lrcv_get_file_set(lrcv)->items[lrcv->stream_curr_file];
+            uint32 next_asn = curr->head.asn + 1;
+            if (spec_asn == next_asn && next != spec_file_id) {
+                OG_THROW_ERROR(ERR_SWITCH_LOGFILE,
+                    "asn %u located in different fileid %u/%u on peer node and local node",
+                    spec_asn, spec_file_id, next);
+                OG_LOG_RUN_ERR("[Log Receiver] asn %u located in different fileid %u/%u on peer node and local node, "
+                               "perhaps the add/drop logfile has not been replayed",
+                               spec_asn, spec_file_id, next);
+                return OG_ERROR;
+            }
+        }
+
+        lrcv_lock_logfile(lrcv);
+
+        file = &lrcv_get_file_set(lrcv)->items[lrcv->stream_curr_file];
+        if (file->head.write_pos == CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size)) {
+            if (spec_file_id == OG_INVALID_FILEID || spec_asn == OG_INVALID_ASN) {
+                lrcv_unlock_logfile(lrcv);
+                return OG_SUCCESS;
+            }
+        }
+
+        lrcv_get_next_file(lrcv, &next, OG_TRUE);
+        if (next == lrcv->stream_active_file) {
+            lrcv_unlock_logfile(lrcv);
+            continue;
+        }
+
+        uint16 pre_fileid = lrcv->stream_curr_file;
+        file = &lrcv_get_file_set(lrcv)->items[lrcv->stream_curr_file];
+        if (DB_NOT_READY(session) && log_repair_file_offset(session, file) != OG_SUCCESS) {
+            OG_THROW_ERROR(ERR_SWITCH_LOGFILE, "repair current log offset failed");
+            lrcv_unlock_logfile(lrcv);
+            return OG_ERROR;
+        }
+        lrcv_flush_stream_head(lrcv, file);
+        status = lrcv_switch_stream_file(lrcv);
+
+        if (need_skip) {
+            file = &lrcv_get_file_set(lrcv)->items[pre_fileid];
+            file->head.asn = OG_INVALID_ASN;
+            file->ctrl->status = LOG_FILE_INACTIVE;
+            file->ctrl->archived = OG_FALSE;
+            lrcv_flush_stream_head(lrcv, file);
+            if (db_save_log_ctrl(session, pre_fileid, lrcv->src_node_id) != OG_SUCCESS) {
+                CM_ABORT(0, "[Log Receiver] ABORT INFO: save control space file failed when switch stream log file");
+            }
+        }
+
+        file = &lrcv_get_file_set(lrcv)->items[lrcv->stream_curr_file];
+        if (status == OG_SUCCESS &&
+            !(spec_file_id == OG_INVALID_FILEID || spec_asn == OG_INVALID_ASN ||
+              (lrcv->stream_curr_file == spec_file_id && file->head.asn == spec_asn))) {
+            need_skip = OG_TRUE;
+            lrcv_unlock_logfile(lrcv);
+            OG_LOG_RUN_INF("[Log Receiver] Switch stream %u log, need to skip file %u asn %u state %d",
+                           lrcv->src_node_id, lrcv->stream_curr_file, file->head.asn, file->ctrl->status);
+            continue;
+        }
+
+        lrcv_unlock_logfile(lrcv);
+        return status;
+    }
+}
+
+void lrcv_update_frontier(lrcv_context_t *lrcv, uint64 lsn)
+{
+    if (lrcv == NULL || !lrcv->stream_bound) {
+        return;
+    }
+
+    if (lsn > lrcv->lsn_frontier) {
+        lrcv->lsn_frontier = lsn;
+    }
+}
+
+/* close the log file handles opened by this receiver for a remote stream */
+void lrcv_close_stream_files(lrcv_context_t *lrcv)
+{
+    if (lrcv == NULL || !lrcv->stream_bound || lrcv->file_set == NULL ||
+        lrcv->src_node_id == lrcv->session->kernel->id) {
+        return;
+    }
+
+    for (uint32 i = 0; i < lrcv->stream_logfile_hwm; i++) {
+        if (lrcv->stream_handle[i] >= 0) {
+            log_file_t *file = &lrcv->file_set->items[i];
+            cm_close_device(file->ctrl->type, &lrcv->stream_handle[i]);
+            lrcv->stream_handle[i] = -1;
+        }
+    }
+}
+
+lrcv_context_t *lrcv_get_stream(knl_session_t *session, uint32 src_node_id)
+{
+    lrcv_mgr_t *mgr = &session->kernel->lrcv_mgr;
+
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        lrcv_context_t *lrcv = &mgr->streams[i];
+        if (lrcv->stream_bound && lrcv->src_node_id == src_node_id) {
+            return lrcv;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Recycle stream log files whose head is before the given point.  Only the
+ * local stream (src_node_id == local node id) recycles files; remote streams
+ * rely on the per-node archive recycle handled by the archiver, so this is a
+ * per-stream variant of log_recycle_file used by lrcv_wait_logfile_no_active.
+ */
+static void lrcv_recycle_file(lrcv_context_t *lrcv, log_point_t *point)
+{
+    if (DB_CLUSTER_NO_CMS) {
+        return;
+    }
+    if (lrcv_is_dss_log(lrcv)) {
+        /* DBStor standby recycle is per-node and handled in log_recycle_file. */
+        log_recycle_file(lrcv->session, point);
+        return;
+    }
+
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
+    arch_log_id_t last_arch_log;
+    arch_last_archived_log(lrcv->session, ARCH_DEFAULT_DEST, &last_arch_log);
+
+    log_file_t *file = &file_set->items[lrcv->stream_active_file];
+    if (lrcv->wait_info.waiting) {
+        return;
+    }
+
+    lrcv_lock_logfile(lrcv);
+    uint32 file_id = lrcv->stream_active_file;
+    while (LOG_POINT_FILE_LT(file_set->items[file_id].head, *point)) {
+        file = &file_set->items[file_id];
+        if ((file_id == lrcv->stream_curr_file) ||
+            (file->head.asn > last_arch_log.asn ||
+             (file->ctrl->status == LOG_FILE_ACTIVE && !file->ctrl->archived))) {
+            break;
+        }
+
+        file->ctrl->status = LOG_FILE_INACTIVE;
+        file->ctrl->archived = OG_FALSE;
+        cm_latch_x(&file->latch, lrcv->session->id, NULL);
+        file->head.asn = OG_INVALID_ASN;
+        file->head.write_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+        file->arch_pos = 0;
+        cm_unlatch(&file->latch, NULL);
+
+        lrcv->stream_free_size += log_file_freesize(file);
+        lrcv_get_next_file(lrcv, &file_id, OG_FALSE);
+        lrcv->stream_active_file = (uint16)file_id;
+        lrcv_get_node_ctrl(lrcv)->log_first = file_id;
+        if (db_save_log_ctrl(lrcv->session, file_id, lrcv->src_node_id) != OG_SUCCESS) {
+            CM_ABORT(0, "[Log Receiver] ABORT INFO: save core control file failed when recycling stream log file");
+        }
+    }
+    lrcv_sync_stream_state(lrcv);
+    lrcv_unlock_logfile(lrcv);
+}
+
 static bool32 lrcv_need_suspend(lrcv_context_t *lrcv)
 {
     database_t *db = &lrcv->session->kernel->db;
@@ -86,14 +557,13 @@ static bool32 lrcv_need_suspend(lrcv_context_t *lrcv)
 static bool32 lrcv_rcv_msg_is_valid(lrcv_context_t *lrcv)
 {
     char *extend_buf = lrcv->extend_buf.read_buf.aligned_buf;
-    log_context_t *redo_ctx = &lrcv->session->kernel->redo_ctx;
 
     switch (lrcv->header.type) {
         case REP_BATCH_REQ: {
             rep_batch_req_t *req = (rep_batch_req_t *)extend_buf;
             if (log_point_is_invalid(&req->log_point) || log_point_is_invalid(&req->curr_point) ||
                 req->compress_alg < COMPRESS_NONE || req->compress_alg > COMPRESS_LZ4 ||
-                req->log_file_id >= redo_ctx->logfile_hwm) {
+                req->log_file_id >= lrcv_get_logfile_hwm(lrcv)) {
                 return OG_FALSE;
             }
             break;
@@ -156,41 +626,67 @@ static bool32 lrcv_need_exit(lrcv_context_t *lrcv)
 
 static status_t lrcv_flush_log(lrcv_context_t *lrcv, log_point_t *log_point, void *batch, uint32 size)
 {
-    log_context_t *log_ctx = &lrcv->session->kernel->redo_ctx;
-    log_file_t *file = &log_ctx->files[log_ctx->curr_file];
-    uint64 offset = (uint64)log_point->block_id * file->ctrl->block_size;
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
+    log_file_t *file = &file_set->items[lrcv_get_curr_file(lrcv)];
+    /*
+     * DBStor (DEV_TYPE_ULOG) redo is addressed by LSN, while file/raw devices
+     * are addressed by byte offset.  The primary writes ulog at the batch LSN,
+     * so the receiver must do the same.  For byte-addressed files the receiver
+     * appends at ITS OWN sequential write position: the BUILD snapshot does
+     * not necessarily reproduce the primary's physical block layout, so using
+     * the primary-side block id here would leave holes/gaps in the standby's
+     * log file that the redo replay read point cannot follow.  The primary's
+     * block id is kept in the flush point (see lrcv_process_batch) so the
+     * sender still resumes at the right position in ITS file.
+     */
+    uint64 offset = (file->ctrl->type == DEV_TYPE_ULOG) ? (uint64)log_point->lsn
+                                                        : (uint64)file->head.write_pos;
     uint32 space_size = CM_CALC_ALIGN(size, file->ctrl->block_size);
     log_batch_t *batch_x = (log_batch_t *)batch;
     log_batch_tail_t *tail = (log_batch_tail_t *)((char *)batch + batch_x->size - sizeof(log_batch_tail_t));
 
-    if (cm_write_device(file->ctrl->type, file->handle, offset, batch, space_size) != OG_SUCCESS) {
+    int32 write_handle = (lrcv->stream_bound && lrcv_is_remote_stream(lrcv))
+                             ? lrcv->stream_handle[lrcv_get_curr_file(lrcv)]
+                             : file->handle;
+    if (cm_write_device(file->ctrl->type, write_handle, offset, batch, space_size) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[Log Receiver] failed to write log into %s[%u] with log size %u at point [%u-%u/%llu]",
-                       file->ctrl->name, log_ctx->curr_file, space_size,
+                       file->ctrl->name, lrcv_get_curr_file(lrcv), space_size,
                        file->head.rst_id, file->head.asn, file->head.write_pos);
         return OG_ERROR;
     }
 
     OG_LOG_DEBUG_INF("[Log Receiver] Write space size %u into log file[%u] at point [%u-%u/%llu] to %llu "
                      "size %u head [%llx/%llu/%llu] tail [%llx/%llu]",
-                     space_size, log_ctx->curr_file, file->head.rst_id, file->head.asn,
+                     space_size, lrcv_get_curr_file(lrcv), file->head.rst_id, file->head.asn,
                      file->head.write_pos, offset + space_size, batch_x->size, batch_x->head.magic_num,
                      (uint64)batch_x->head.point.lfn, batch_x->raft_index, tail->magic_num, (uint64)tail->point.lfn);
-    lrcv->session->kernel->lfn = log_point->lfn;
+    lrcv->stream_flushed_lfn = log_point->lfn;
+    if (!lrcv->stream_bound || !lrcv_is_remote_stream(lrcv)) {
+        lrcv->session->kernel->lfn = log_point->lfn;
+    }
     file->head.write_pos = offset + space_size;
     file->head.last = batch_x->scn;
     if (file->head.first == OG_INVALID_ID64) {
         file->head.first = batch_x->scn;
-        log_flush_head(lrcv->session, file);
     }
+    /*
+     * Persist the file head on every flush.  The head carries the authoritative
+     * write position of the received redo; if it is only written on the first
+     * batch (or on log switch), an unclean stop leaves a stale on-disk head and
+     * the standby's startup recovery treats the file as empty, skipping the
+     * un-applied tail that was already received.
+     */
+    lrcv_flush_stream_head(lrcv, file);
     log_point->block_id = (uint32)(file->head.write_pos / file->ctrl->block_size);
-    log_ctx->free_size -= space_size;
+    lrcv_set_free_size(lrcv, lrcv_get_free_size(lrcv) - space_size);
+    lrcv->stream_curr_point = *log_point;
 
     return OG_SUCCESS;
 }
 
-static status_t lrcv_process_heart_beat(knl_session_t *session)
+static status_t lrcv_process_heart_beat(lrcv_context_t *lrcv)
 {
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    knl_session_t *session = lrcv->session;
     char *buf = lrcv->send_buf.read_buf.aligned_buf;
     rep_msg_header_t *rep_msg_header = (rep_msg_header_t *)buf;
     rep_hb_resp_t *rep_hb_resp = (rep_hb_resp_t *)(buf + sizeof(rep_msg_header_t));
@@ -200,8 +696,8 @@ static status_t lrcv_process_heart_beat(knl_session_t *session)
     rep_msg_header->type = REP_HEART_BEAT_RESP;
 
     rep_hb_resp->flush_point = lrcv->flush_point;
-    rep_hb_resp->rcy_point = lrcv->session->kernel->redo_ctx.curr_replay_point;
-    rep_hb_resp->replay_lsn = (uint64)lrcv->session->kernel->lsn;
+    rep_hb_resp->rcy_point = lrcv_get_node_ctrl(lrcv)->rcy_point;
+    rep_hb_resp->replay_lsn = (uint64)lrcv_get_node_ctrl(lrcv)->lsn;
     rep_hb_resp->flush_scn = lrcv->flush_scn;
     rep_hb_resp->current_scn = DB_CURR_SCN(lrcv->session);
     rep_hb_resp->contflush_point.rst_id = lrcv->contflush_point.rst_id;
@@ -224,16 +720,17 @@ static status_t lrcv_fetch_archived_log(lrcv_context_t *lrcv, log_file_t *file, 
 
     uint32 rst_id = file->head.rst_id;
     uint32 asn = file->head.asn;
+    uint32 node_id = lrcv->stream_bound ? lrcv->src_node_id : lrcv->session->kernel->id;
 
     // Check whether corresponding archived log exists
     if (arch_get_archived_log_name(lrcv->session, rst_id, asn, ARCH_DEFAULT_DEST, arch_name, arch_name_buf_size,
-                                   lrcv->session->kernel->id)) {
+                                   node_id)) {
         return OG_SUCCESS;
     }
 
     arch_set_archive_log_name(lrcv->session, rst_id, asn, ARCH_DEFAULT_DEST, arch_name, arch_name_buf_size,
-                              lrcv->session->kernel->id);
-    OG_LOG_RUN_INF("[Log Receiver] Archive log %s for node %d not found", arch_name, lrcv->session->kernel->id);
+                              node_id);
+    OG_LOG_RUN_INF("[Log Receiver] Archive log %s for node %d not found", arch_name, node_id);
     if (cm_file_exist(arch_name)) {
         return OG_SUCCESS;
     }
@@ -251,7 +748,7 @@ static status_t lrcv_fetch_archived_log(lrcv_context_t *lrcv, log_file_t *file, 
         if (need_wait) {
             time_t now = cm_current_time();
             if ((now - last_send_time) >= REPL_HEART_BEAT_CHECK) {
-                if (lrcv_process_heart_beat(lrcv->session) != OG_SUCCESS) {
+                if (lrcv_process_heart_beat(lrcv) != OG_SUCCESS) {
                     lrcv_set_conn_err(lrcv);
                     return OG_ERROR;
                 }
@@ -276,7 +773,7 @@ static status_t lrcv_fetch_archived_log(lrcv_context_t *lrcv, log_file_t *file, 
 
         // If failed to fetch log from primary, restart the task
         arch_set_archive_log_name(lrcv->session, rst_id, asn, ARCH_DEFAULT_DEST, arch_name, arch_name_buf_size,
-                                  lrcv->session->kernel->id);
+                                  node_id);
         if (lftc_clt_create_task(lrcv->session, rst_id, asn, arch_name, &lftc_handle) != OG_SUCCESS) {
             return OG_ERROR;
         }
@@ -332,34 +829,36 @@ static inline void lrcv_set_switch_wait(lrcv_context_t *lrcv, rep_batch_req_t *r
 
 static void lrcv_reset_switch_wait(lrcv_context_t *lrcv)
 {
-    log_context_t *log = &lrcv->session->kernel->redo_ctx;
-    log_file_t *file = &log->files[log->curr_file];
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
+    log_file_t *file = &file_set->items[lrcv_get_curr_file(lrcv)];
     log_point_t *wait_point = &lrcv->wait_info.wait_point;
+    dtc_node_ctrl_t *node_ctrl = lrcv_get_node_ctrl(lrcv);
+    uint32 node_id = lrcv->stream_bound ? lrcv->src_node_id : lrcv->session->kernel->id;
 
-    log_lock_logfile(lrcv->session);
+    lrcv_lock_logfile(lrcv);
 
     /* Invalidate current log file if it exists still */
     if (!LOG_IS_DROPPED(file->ctrl->flg)) {
         uint64 start_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
         cm_latch_x(&file->latch, lrcv->session->id, NULL);
         file->head.asn = OG_INVALID_ASN;
-        log->free_size += file->head.write_pos - start_pos;
+        lrcv_set_free_size(lrcv, lrcv_get_free_size(lrcv) + file->head.write_pos - start_pos);
         file->head.write_pos = start_pos;
         file->head.rcy_off = 0;
         file->ctrl->status = LOG_FILE_INACTIVE;
         file->ctrl->archived = OG_FALSE;
-        log_flush_head(lrcv->session, file);
-        if (db_save_log_ctrl(lrcv->session, log->curr_file, lrcv->session->kernel->id) != OG_SUCCESS) {
+        lrcv_flush_stream_head(lrcv, file);
+        if (db_save_log_ctrl(lrcv->session, lrcv_get_curr_file(lrcv), node_id) != OG_SUCCESS) {
             CM_ABORT(0, "[Log Receiver] ABORT INFO: save control space file failed when reset switch wait");
         }
         cm_unlatch(&file->latch, NULL);
     }
 
-    log->active_file = lrcv->wait_info.file_id;
-    log->curr_file = lrcv->wait_info.file_id;
+    lrcv->stream_active_file = (uint16)lrcv->wait_info.file_id;
+    lrcv->stream_curr_file = (uint16)lrcv->wait_info.file_id;
 
     /* Reset current log file */
-    file = &log->files[log->curr_file];
+    file = &file_set->items[lrcv->stream_curr_file];
     cm_latch_x(&file->latch, lrcv->session->id, NULL);
     file->head.asn = wait_point->asn;
     file->head.rst_id = (uint32)wait_point->rst_id;
@@ -367,18 +866,19 @@ static void lrcv_reset_switch_wait(lrcv_context_t *lrcv)
     file->head.rcy_off = 0;
     file->ctrl->status = LOG_FILE_CURRENT;
     file->ctrl->archived = OG_FALSE;
-    log_flush_head(lrcv->session, file);
-    if (db_save_log_ctrl(lrcv->session, log->curr_file, lrcv->session->kernel->id) != OG_SUCCESS) {
+    lrcv_flush_stream_head(lrcv, file);
+    if (db_save_log_ctrl(lrcv->session, lrcv->stream_curr_file, node_id) != OG_SUCCESS) {
         CM_ABORT(0, "[Log Receiver] ABORT INFO: save control space file failed when reset switch wait");
     }
     cm_unlatch(&file->latch, NULL);
-    log_unlock_logfile(lrcv->session);
+    lrcv_unlock_logfile(lrcv);
 
-    dtc_my_ctrl(lrcv->session)->log_first = log->active_file;
-    dtc_my_ctrl(lrcv->session)->log_last = log->curr_file;
+    node_ctrl->log_first = lrcv->stream_active_file;
+    node_ctrl->log_last = lrcv->stream_curr_file;
     if (db_save_core_ctrl(lrcv->session) != OG_SUCCESS) {
         CM_ABORT(0, "[Log Receiver] ABORT INFO: save control space file failed when reset switch wait");
     }
+    lrcv_sync_stream_state(lrcv);
 
     /* Reset switch wait info */
     lrcv->wait_info.waiting = OG_FALSE;
@@ -410,13 +910,13 @@ static status_t lrcv_send_switch_wait(lrcv_context_t *lrcv)
 static status_t lrcv_process_switch_wait(lrcv_context_t *lrcv)
 {
     knl_session_t *session = lrcv->session;
-    log_point_t *rcy_point = &dtc_my_ctrl(session)->rcy_point;
-    log_point_t *lrp_point = &dtc_my_ctrl(session)->lrp_point;
-    lrpl_context_t *lrpl = &session->kernel->lrpl_ctx;
+    dtc_node_ctrl_t *node_ctrl = lrcv_get_node_ctrl(lrcv);
+    log_point_t *rcy_point = &node_ctrl->rcy_point;
+    log_point_t *lrp_point = &node_ctrl->lrp_point;
     log_point_t *wait_point = &lrcv->wait_info.wait_point;
     log_file_head_t *head = &session->kernel->rcy_ctx.arch_file.head;
-    log_context_t *redo = &session->kernel->redo_ctx;
-    log_file_head_t *curr = &redo->files[redo->curr_file].head;
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
+    log_file_head_t *curr = &file_set->items[lrcv_get_curr_file(lrcv)].head;
     if (!lrcv->wait_info.waiting) {
         return OG_SUCCESS;
     }
@@ -427,10 +927,10 @@ static status_t lrcv_process_switch_wait(lrcv_context_t *lrcv)
      * 2. Replay point is at the end of current file (replay point is on current file),
      * 3. Replay point is equal to wait point.
      */
-    if (!((head->asn == wait_point->asn - 1 && lrpl->curr_point.block_id * head->block_size == head->write_pos) ||
-        (curr->asn == wait_point->asn - 1 && redo->curr_point.block_id > 1 &&
-        redo->curr_point.block_id * curr->block_size == curr->write_pos) ||
-        (log_cmp_point(&lrpl->curr_point, wait_point) == 0))) {
+    if (!(log_cmp_point(rcy_point, wait_point) >= 0 ||
+        (head->asn == wait_point->asn - 1 && rcy_point->block_id * head->block_size == head->write_pos) ||
+        (curr->asn == wait_point->asn - 1 && rcy_point->block_id > 1 &&
+        rcy_point->block_id * curr->block_size == curr->write_pos))) {
         return OG_SUCCESS;
     }
 
@@ -443,8 +943,8 @@ static status_t lrcv_process_switch_wait(lrcv_context_t *lrcv)
         return OG_SUCCESS;
     }
 
-    OG_LOG_RUN_INF("[Log Receiver] asn %u can locate in fileid %u on local node, log switch will succeed",
-        lrcv->wait_info.wait_point.asn, lrcv->wait_info.file_id);
+    OG_LOG_RUN_INF("[Log Receiver] asn %u can locate in fileid %u on stream %u, log switch will succeed",
+        lrcv->wait_info.wait_point.asn, lrcv->wait_info.file_id, lrcv->src_node_id);
 
     lrcv_reset_switch_wait(lrcv);
     if (lrcv_send_switch_wait(lrcv) != OG_SUCCESS) {
@@ -456,9 +956,11 @@ static status_t lrcv_process_switch_wait(lrcv_context_t *lrcv)
 
 static status_t lrcv_process_batch(lrcv_context_t *lrcv)
 {
-    log_context_t *log = &lrcv->session->kernel->redo_ctx;
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
+    dtc_node_ctrl_t *node_ctrl = lrcv_get_node_ctrl(lrcv);
     log_batch_t *batch = (log_batch_t *)(lrcv->recv_buf.read_buf.aligned_buf);
     rep_batch_req_t *req = (rep_batch_req_t *)lrcv->extend_buf.read_buf.aligned_buf;
+    uint32 node_id = lrcv->stream_bound ? lrcv->src_node_id : lrcv->session->kernel->id;
 
     if (lrcv->header.size <= sizeof(rep_msg_header_t) + sizeof(rep_batch_req_t)) {
         OG_LOG_RUN_ERR("[Log Receiver] invalid batch head size %u received, which is smaller than %u",
@@ -471,12 +973,12 @@ static status_t lrcv_process_batch(lrcv_context_t *lrcv)
     OG_LOG_DEBUG_INF("[Log Receiver] Received batch with size %u on log file[%u] at point [%u-%u/%u/%llu], "
                      "current log file is %u",
                      size, req->log_file_id, req->log_point.rst_id, req->log_point.asn,
-                     req->log_point.block_id, (uint64)req->log_point.lfn, log->curr_file);
+                     req->log_point.block_id, (uint64)req->log_point.lfn, lrcv_get_curr_file(lrcv));
 
     lrcv->primary_curr_point = req->curr_point;
 
     if (lrcv->status == LRCV_PREPARE) {
-        log_file_t *file = &log->files[log->curr_file];
+        log_file_t *file = &file_set->items[lrcv_get_curr_file(lrcv)];
 
         /*
          * 1) req log_point > file head scenario: primary switched logfile during disconnection.
@@ -485,10 +987,10 @@ static status_t lrcv_process_batch(lrcv_context_t *lrcv)
          *                                        and peer node has failovered.
          */
         if (LRCV_LOG_POINT_ON_POST_FILE(req->log_point, file->head) ||
-            (LRCV_LOG_POINT_ON_CURR_FILE(req->log_point, file->head) && req->log_file_id != log->curr_file) ||
+            (LRCV_LOG_POINT_ON_CURR_FILE(req->log_point, file->head) && req->log_file_id != lrcv_get_curr_file(lrcv)) ||
             LRCV_LOG_POINT_ON_PRE_FILE(req->log_point, file->head)) {
             uint64 start_pos;
-            uint32 file_id = log->active_file;
+            uint32 file_id = lrcv_get_active_file(lrcv);
             char arch_name[OG_FILE_NAME_BUFFER_SIZE];
 
             if (LRCV_LOG_POINT_ON_POST_FILE(req->log_point, file->head)) {
@@ -499,41 +1001,41 @@ static status_t lrcv_process_batch(lrcv_context_t *lrcv)
                 }
             }
 
-            log_lock_logfile(lrcv->session);
+            lrcv_lock_logfile(lrcv);
 
             // Need to invalidate current log file
             start_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
             cm_latch_x(&file->latch, lrcv->session->id, NULL);
             file->head.asn = OG_INVALID_ASN;
             file->head.rst_id = (uint32)req->log_point.rst_id;
-            log->free_size += file->head.write_pos - start_pos;
+            lrcv_set_free_size(lrcv, lrcv_get_free_size(lrcv) + file->head.write_pos - start_pos);
             file->head.write_pos = start_pos;
             file->head.rcy_off = 0;
             file->ctrl->status = LOG_FILE_INACTIVE;
             file->ctrl->archived = OG_FALSE;
-            log_flush_head(lrcv->session, file);
-            if (db_save_log_ctrl(lrcv->session, log->curr_file, lrcv->session->kernel->id) != OG_SUCCESS) {
+            lrcv_flush_stream_head(lrcv, file);
+            if (db_save_log_ctrl(lrcv->session, lrcv_get_curr_file(lrcv), node_id) != OG_SUCCESS) {
                 CM_ABORT(0, "[Log Receiver] ABORT INFO: save control space file failed when switch log file");
             }
             cm_unlatch(&file->latch, NULL);
 
-            OG_LOG_RUN_INF("[Log Receiver] Invalidate current file, active %u current %u",
-                           log->active_file, log->curr_file);
+            OG_LOG_RUN_INF("[Log Receiver] Invalidate current file, active %u current %u for stream %u",
+                           lrcv_get_active_file(lrcv), lrcv_get_curr_file(lrcv), lrcv->src_node_id);
 
-            while (file_id != log->curr_file) {
-                file = log->files + file_id;
+            while (file_id != lrcv_get_curr_file(lrcv)) {
+                file = file_set->items + file_id;
                 if (file->ctrl->status == LOG_FILE_ACTIVE) {
                     start_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
-                    log->free_size += (uint64)file->ctrl->size - start_pos;
+                    lrcv_set_free_size(lrcv, lrcv_get_free_size(lrcv) + (uint64)file->ctrl->size - start_pos);
                     file->ctrl->status = LOG_FILE_UNUSED;
                 }
-                log_get_next_file(lrcv->session, &file_id, OG_FALSE);
+                lrcv_get_next_file(lrcv, &file_id, OG_FALSE);
             }
 
-            log->active_file = req->log_file_id;
-            log->curr_file = req->log_file_id;
+            lrcv->stream_active_file = (uint16)req->log_file_id;
+            lrcv->stream_curr_file = (uint16)req->log_file_id;
 
-            file = &log->files[log->curr_file];
+            file = &file_set->items[lrcv->stream_curr_file];
             cm_latch_x(&file->latch, lrcv->session->id, NULL);
             file->head.asn = req->log_point.asn;
             file->head.rst_id = (uint32)req->log_point.rst_id;
@@ -541,49 +1043,46 @@ static status_t lrcv_process_batch(lrcv_context_t *lrcv)
             file->head.rcy_off = 0;
             file->ctrl->status = LOG_FILE_CURRENT;
             file->ctrl->archived = OG_FALSE;
-            log_flush_head(lrcv->session, file);
-            if (db_save_log_ctrl(lrcv->session, log->curr_file, lrcv->session->kernel->id) != OG_SUCCESS) {
+            lrcv_flush_stream_head(lrcv, file);
+            if (db_save_log_ctrl(lrcv->session, lrcv->stream_curr_file, node_id) != OG_SUCCESS) {
                 CM_ABORT(0, "[Log Receiver] ABORT INFO: save control space file failed when switch log file");
             }
             cm_unlatch(&file->latch, NULL);
-            log_unlock_logfile(lrcv->session);
+            lrcv_unlock_logfile(lrcv);
 
-            OG_LOG_RUN_INF("[Log Receiver] Reset current file asn %u status %d, active %u current %u",
-                           file->head.asn, file->ctrl->status, log->active_file, log->curr_file);
+            OG_LOG_RUN_INF("[Log Receiver] Reset current file asn %u status %d, active %u current %u for stream %u",
+                           file->head.asn, file->ctrl->status, lrcv->stream_active_file, lrcv->stream_curr_file,
+                           lrcv->src_node_id);
 
-            dtc_my_ctrl(lrcv->session)->log_first = log->active_file;
-            dtc_my_ctrl(lrcv->session)->log_last = log->curr_file;
+            node_ctrl->log_first = lrcv->stream_active_file;
+            node_ctrl->log_last = lrcv->stream_curr_file;
             if (OG_SUCCESS != db_save_core_ctrl(lrcv->session)) {
                 CM_ABORT(0, "[Log Receiver] ABORT INFO: save control space file failed when switch log file");
             }
+            lrcv_sync_stream_state(lrcv);
         }
 
         lrcv->reset_asn = req->log_point.asn;
         lrcv->status = LRCV_READY;
     }
 
-    if (req->log_file_id != log->curr_file ||
-        req->log_point.asn != log->files[log->curr_file].head.asn) {
-        callback_t callback;
-
-        if (log_switch_need_wait(lrcv->session, (uint16)req->log_file_id, req->log_point.asn)) {
+    if (req->log_file_id != lrcv_get_curr_file(lrcv) ||
+        req->log_point.asn != file_set->items[lrcv_get_curr_file(lrcv)].head.asn) {
+        if (lrcv_switch_need_wait(lrcv, (uint16)req->log_file_id, req->log_point.asn)) {
             lrcv_set_switch_wait(lrcv, req);
-            OG_LOG_RUN_INF("[Log Receiver] asn %u does not locate in fileid %u on local node, log switch should wait",
-                req->log_point.asn, req->log_file_id);
+            OG_LOG_RUN_INF("[Log Receiver] asn %u does not locate in fileid %u on stream %u, log switch should wait",
+                req->log_point.asn, req->log_file_id, lrcv->src_node_id);
             return OG_SUCCESS;
         }
 
-        callback.keep_hb_entry = lrcv_process_heart_beat;
-        callback.keep_hb_param = lrcv->session;
-        if (log_switch_logfile(lrcv->session, (uint16)req->log_file_id, req->log_point.asn,
-                               &callback) != OG_SUCCESS) {
+        if (lrcv_switch_logfile(lrcv, (uint16)req->log_file_id, req->log_point.asn) != OG_SUCCESS) {
             OG_LOG_RUN_ERR("[Log Receiver] failed to switch log file to %u with asn %u", req->log_file_id,
                            req->log_point.asn);
             return OG_ERROR;
         }
     }
 
-    knl_panic(req->log_file_id == log->curr_file);
+    knl_panic(req->log_file_id == lrcv_get_curr_file(lrcv));
 
     if (lrcv_verify_checksum_batch(lrcv->session, batch, size, &req->log_point) != OG_SUCCESS) {
         return OG_ERROR;
@@ -595,6 +1094,7 @@ static status_t lrcv_process_batch(lrcv_context_t *lrcv)
 
     lrcv->flush_point = req->log_point;
     lrcv->flush_scn = req->scn;
+    lrcv_update_frontier(lrcv, batch->lsn);
 
     return OG_SUCCESS;
 }
@@ -610,8 +1110,8 @@ static status_t lrcv_send_batch_ack(lrcv_context_t *lrcv)
     rep_msg_header->type = REP_BATCH_RESP;
 
     rep_batch_resp->flush_point = lrcv->flush_point;
-    rep_batch_resp->rcy_point = lrcv->session->kernel->redo_ctx.curr_replay_point;
-    rep_batch_resp->replay_lsn = (uint64)lrcv->session->kernel->lsn;
+    rep_batch_resp->rcy_point = lrcv_get_node_ctrl(lrcv)->rcy_point;
+    rep_batch_resp->replay_lsn = (uint64)lrcv_get_node_ctrl(lrcv)->lsn;
     rep_batch_resp->flush_scn = lrcv->flush_scn;
     rep_batch_resp->current_scn = DB_CURR_SCN(lrcv->session);
     rep_batch_resp->contflush_point.rst_id = lrcv->contflush_point.rst_id;
@@ -633,27 +1133,29 @@ static void lrcv_needrepair(lrcv_context_t *lrcv)
 
 static status_t lrcv_wait_logfile_no_active(lrcv_context_t *lrcv)
 {
-    log_context_t *log_ctx = &lrcv->session->kernel->redo_ctx;
-    log_point_t *rcy_point = &dtc_my_ctrl(lrcv->session)->rcy_point;
-    uint32 file_id = log_ctx->active_file;
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
+    log_point_t *rcy_point = &lrcv_get_node_ctrl(lrcv)->rcy_point;
+    uint32 file_id = lrcv_get_active_file(lrcv);
     log_file_t *file = NULL;
     uint64 lfn;
     uint64 scn;
+    uint32 node_id = lrcv->stream_bound ? lrcv->src_node_id : lrcv->session->kernel->id;
 
-    OG_LOG_RUN_INF("[Log Receiver] log file active %u current %u", log_ctx->active_file, log_ctx->curr_file);
+    OG_LOG_RUN_INF("[Log Receiver] log file active %u current %u for stream %u", lrcv_get_active_file(lrcv),
+                   lrcv_get_curr_file(lrcv), lrcv->src_node_id);
     // Wait for all log files before current file to become LOG_STATE_INACTIVE or LOG_STATE_UNUSED
-    while (file_id != log_ctx->curr_file) {
+    while (file_id != lrcv_get_curr_file(lrcv)) {
         ckpt_trigger(lrcv->session, OG_FALSE, CKPT_TRIGGER_INC);
 
-        file = log_ctx->files + file_id;
+        file = file_set->items + file_id;
         if (file->ctrl->status == LOG_FILE_INACTIVE || file->ctrl->status == LOG_FILE_UNUSED) {
-            log_get_next_file(lrcv->session, &file_id, OG_FALSE);
+            lrcv_get_next_file(lrcv, &file_id, OG_FALSE);
         } else if (file->ctrl->status == LOG_FILE_ACTIVE) {
             if (LRCV_LOG_POINT_ON_CURR_FILE(*rcy_point, file->head)) {
                 char arch_name[OG_FILE_NAME_BUFFER_SIZE];
 
                 if (arch_get_archived_log_name(lrcv->session, file->head.rst_id, file->head.asn, ARCH_DEFAULT_DEST,
-                                               arch_name, OG_FILE_NAME_BUFFER_SIZE, lrcv->session->kernel->id)) {
+                                               arch_name, OG_FILE_NAME_BUFFER_SIZE, node_id)) {
                     uint64 file_offset = 0;
                     if (log_get_file_offset(lrcv->session, arch_name, &lrcv->recv_buf.read_buf, &file_offset,
                                             &lfn, &scn) != OG_SUCCESS) {
@@ -661,13 +1163,13 @@ static status_t lrcv_wait_logfile_no_active(lrcv_context_t *lrcv)
                         return OG_ERROR;
                     }
 
-                    if (rcy_point->lfn >= lfn || log_ctx->lfn >= lfn) {
+                    if (rcy_point->lfn >= lfn || lrcv->stream_flushed_lfn >= lfn) {
                         OG_LOG_RUN_INF("[Log Receiver] rcy_point [%u-%u/%u/%llu] or replay lfn %llu has reached "
                                        "the end of log file[%u] [%u-%u/%llu/%llu]",
                                        rcy_point->rst_id, rcy_point->asn, rcy_point->block_id,
-                                       (uint64)rcy_point->lfn, log_ctx->lfn, file_id,
+                                       (uint64)rcy_point->lfn, lrcv->stream_flushed_lfn, file_id,
                                        file->head.rst_id, file->head.asn, file_offset, lfn);
-                        log_get_next_file(lrcv->session, &file_id, OG_FALSE);
+                        lrcv_get_next_file(lrcv, &file_id, OG_FALSE);
                     } else {
                         OG_LOG_DEBUG_INF("[Log Receiver] rcy_point [%u-%u/%u/%llu] has not reached the end of "
                                          "log file[%u] [%u-%u/%llu/%llu], so continue",
@@ -679,14 +1181,14 @@ static status_t lrcv_wait_logfile_no_active(lrcv_context_t *lrcv)
                 }
             } else if (LRCV_LOG_POINT_ON_POST_FILE(*rcy_point, file->head)) {
                 if (file->head.asn != OG_INVALID_ASN) {
-                    log_recycle_file(lrcv->session, rcy_point);
+                    lrcv_recycle_file(lrcv, rcy_point);
                 } else {
-                    log_get_next_file(lrcv->session, &file_id, OG_FALSE);
+                    lrcv_get_next_file(lrcv, &file_id, OG_FALSE);
                 }
             } else {
                 cm_sleep(1000);
 
-                if (lrcv_process_heart_beat(lrcv->session) != OG_SUCCESS) {
+                if (lrcv_process_heart_beat(lrcv) != OG_SUCCESS) {
                     return OG_ERROR;
                 }
             }
@@ -705,12 +1207,14 @@ static status_t lrcv_wait_logfile_no_active(lrcv_context_t *lrcv)
 
 static status_t lrcv_prepare_log_files(lrcv_context_t *lrcv, rep_query_status_req_t *req)
 {
-    log_context_t *log_ctx = &lrcv->session->kernel->redo_ctx;
-    log_point_t *lrp_point = &dtc_my_ctrl(lrcv->session)->lrp_point;
-    log_point_t *rcy_point = &dtc_my_ctrl(lrcv->session)->rcy_point;
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
+    dtc_node_ctrl_t *node_ctrl = lrcv_get_node_ctrl(lrcv);
+    log_point_t *lrp_point = &node_ctrl->lrp_point;
+    log_point_t *rcy_point = &node_ctrl->rcy_point;
     uint64 curr_lfn = 0;
     uint64 scn;
     log_file_t *file = NULL;
+    uint32 node_id = lrcv->stream_bound ? lrcv->src_node_id : lrcv->session->kernel->id;
 
     if (lrcv_wait_logfile_no_active(lrcv) != OG_SUCCESS) {
         return OG_ERROR;
@@ -719,12 +1223,12 @@ static status_t lrcv_prepare_log_files(lrcv_context_t *lrcv, rep_query_status_re
     arch_reset_file_id(lrcv->session, ARCH_DEFAULT_DEST);
 
     lrcv->flush_point.lfn = 0;
-    lrcv->contflush_point.rst_id = dtc_my_ctrl(lrcv->session)->rcy_point.rst_id;
-    lrcv->contflush_point.asn = dtc_my_ctrl(lrcv->session)->rcy_point.asn;
-    file = &log_ctx->files[log_ctx->curr_file];
+    lrcv->contflush_point.rst_id = node_ctrl->rcy_point.rst_id;
+    lrcv->contflush_point.asn = node_ctrl->rcy_point.asn;
+    file = &file_set->items[lrcv_get_curr_file(lrcv)];
 
     OG_LOG_RUN_INF("[Log Receiver] Standby current log file[%u] status %d log point is [%u-%u/%llu/%llu]",
-                   log_ctx->curr_file, file->ctrl->status, file->head.rst_id,
+                   lrcv_get_curr_file(lrcv), file->ctrl->status, file->head.rst_id,
                    file->head.asn, file->head.write_pos, curr_lfn);
     OG_LOG_RUN_INF("[Log Receiver] Standby lrp_point is [%u-%u/%u/%llu] rcy_point is [%u-%u/%u/%llu]",
                    lrp_point->rst_id, lrp_point->asn, lrp_point->block_id, (uint64)lrp_point->lfn,
@@ -738,18 +1242,72 @@ static status_t lrcv_prepare_log_files(lrcv_context_t *lrcv, rep_query_status_re
             if (!lrcv->reconnected) {
                 lrcv->flush_point.rst_id = file->head.rst_id;
                 lrcv->flush_point.asn = file->head.asn;
-                if (log_get_file_offset(lrcv->session, file->ctrl->name, &lrcv->recv_buf.read_buf,
-                                        (uint64 *)&file->head.write_pos, &curr_lfn, &scn) != OG_SUCCESS) {
-                    OG_LOG_RUN_ERR("[Log Receiver] failed to get file offset for online log %s ", file->ctrl->name);
-                    return OG_ERROR;
+                if (lrcv_is_dss_log(lrcv)) {
+                    /*
+                     * DSS-backed log files cannot be byte-scanned; the head write pos is
+                     * maintained by the receiver itself, and the replay point is
+                     * the authoritative receive position on a freshly built
+                     * standby.
+                     */
+                    curr_lfn = lrp_point->lfn;
+                } else {
+                    if (log_get_file_offset(lrcv->session, file->ctrl->name, &lrcv->recv_buf.read_buf,
+                                            (uint64 *)&file->head.write_pos, &curr_lfn, &scn) != OG_SUCCESS) {
+                        OG_LOG_RUN_ERR("[Log Receiver] failed to get file offset for online log %s ",
+                                       file->ctrl->name);
+                        return OG_ERROR;
+                    }
                 }
                 OG_LOG_RUN_INF("[Log Receiver] Standby repaired current log file[%u] status %d log point is [%u-%u/%llu/%llu]",
-                               log_ctx->curr_file, file->ctrl->status, file->head.rst_id, file->head.asn,
+                               lrcv_get_curr_file(lrcv), file->ctrl->status, file->head.rst_id, file->head.asn,
                                file->head.write_pos, curr_lfn);
                 lrcv->flush_point.block_id = (uint32)(file->head.write_pos / file->ctrl->block_size);
-                lrcv->flush_point.lfn = curr_lfn;
+                if (curr_lfn == 0) {
+                    /*
+                     * Freshly built standby: the current file contains no
+                     * redo yet, so the file scan cannot tell the primary
+                     * where to resume.  Resume from the APPLIED point (rcy)
+                     * instead of the unavailable lrp, otherwise the primary
+                     * re-sends the whole stream from lfn 1 (wasteful but
+                     * still safe via duplicate skipping) or, worse, resumes
+                     * from a point past unapplied redo.
+                     */
+                    lrcv->flush_point.lfn = rcy_point->lfn;
+                    OG_LOG_RUN_INF("[Log Receiver] fresh log file, resume stream from applied point lfn %llu",
+                                   (uint64)lrcv->flush_point.lfn);
+                } else {
+                    lrcv->flush_point.lfn = curr_lfn;
+                }
             } else {
-                lrcv->flush_point = log_ctx->curr_point;
+                lrcv->flush_point = lrcv->stream_curr_point;
+            }
+            /*
+             * N-to-M standby resume alignment: the BUILD snapshot records the
+             * rcy/lrp point with the primary-side block id, but the standby's
+             * own log file may start the next asn at a different block (the
+             * build leaves the current file freshly initialized).  The
+             * receiver's flush point is the true position where the next
+             * batch lands, so when the applied lfn matches the received lfn,
+             * move the apply cursor to the receiver's block position.
+             * Otherwise the LRPL starts reading mid-stream and reports
+             * "not continuous" for every batch.
+             */
+            if (node_ctrl->rcy_point.lfn == lrcv->flush_point.lfn &&
+                (node_ctrl->rcy_point.asn != lrcv->flush_point.asn ||
+                 node_ctrl->rcy_point.rst_id != lrcv->flush_point.rst_id ||
+                 node_ctrl->rcy_point.block_id != lrcv->flush_point.block_id)) {
+                OG_LOG_RUN_INF("[Log Receiver] align node %u rcy/lrp point [%u-%u/%u] -> [%u-%u/%u] at lfn %llu "
+                               "with stream flush point",
+                               node_id, node_ctrl->rcy_point.rst_id, node_ctrl->rcy_point.asn,
+                               node_ctrl->rcy_point.block_id, lrcv->flush_point.rst_id,
+                               lrcv->flush_point.asn, lrcv->flush_point.block_id,
+                               (uint64)lrcv->flush_point.lfn);
+                node_ctrl->rcy_point.rst_id = lrcv->flush_point.rst_id;
+                node_ctrl->rcy_point.asn = lrcv->flush_point.asn;
+                node_ctrl->rcy_point.block_id = lrcv->flush_point.block_id;
+                node_ctrl->lrp_point.rst_id = lrcv->flush_point.rst_id;
+                node_ctrl->lrp_point.asn = lrcv->flush_point.asn;
+                node_ctrl->lrp_point.block_id = lrcv->flush_point.block_id;
             }
             OG_LOG_RUN_INF("[Log Receiver] lrp_point is on current log, and primary/standby log has no gap");
         } else if (LRCV_LOG_POINT_ON_POST_FILE(req->curr_point, file->head)) {
@@ -764,7 +1322,7 @@ static status_t lrcv_prepare_log_files(lrcv_context_t *lrcv, rep_query_status_re
                 return OG_ERROR;
             }
             file->ctrl->archived = OG_TRUE;
-            if (db_save_log_ctrl(lrcv->session, log_ctx->curr_file, lrcv->session->kernel->id) != OG_SUCCESS) {
+            if (db_save_log_ctrl(lrcv->session, lrcv_get_curr_file(lrcv), node_id) != OG_SUCCESS) {
                 CM_ABORT(0, "[Log Receiver] ABORT INFO: save control redo file failed when prepare logfile");
             }
             lrcv->flush_point.rst_id = file->head.rst_id;
@@ -778,14 +1336,33 @@ static status_t lrcv_prepare_log_files(lrcv_context_t *lrcv, rep_query_status_re
             log_set_logfile_writepos(lrcv->session, file, write_pos_new);
             OG_LOG_RUN_INF("[Log Receiver] Standby repaired current log file[%u] status %d log point "
                            "is [%u-%u/%llu/%llu] with old pos %llu",
-                           log_ctx->curr_file, file->ctrl->status, file->head.rst_id, file->head.asn,
+                           lrcv_get_curr_file(lrcv), file->ctrl->status, file->head.rst_id, file->head.asn,
                            file->head.write_pos, curr_lfn, write_pos_ori);
             if (lrcv->reconnected) {
-                log_ctx->free_size -= file->head.write_pos - write_pos_ori;
+                lrcv_set_free_size(lrcv, lrcv_get_free_size(lrcv) - (file->head.write_pos - write_pos_ori));
             }
             lrcv->flush_point.lfn = curr_lfn;
             lrcv->flush_point.block_id = (uint32)(file->head.write_pos / file->ctrl->block_size);
             OG_LOG_RUN_INF("[Log Receiver] lrp_point is on current log, and primary/standby log has gap");
+        } else if (req->curr_point.lfn >= lrp_point->lfn) {
+            /*
+             * Log-switch boundary: the primary's current point is still on the
+             * previous file (asn N, possibly with a higher LFN) while the
+             * standby's current file is the next file (asn N+1) created by
+             * the build snapshot.  Resume from the end of the standby's
+             * previous file (lfn 949) so the primary re-sends its remaining
+             * asn-N batches; the first batch will naturally switch the
+             * receiver's current file, and the re-sent bytes are idempotent.
+             */
+            lrcv->flush_point.rst_id = req->curr_point.rst_id;
+            lrcv->flush_point.asn = req->curr_point.asn;
+            lrcv->flush_point.block_id = (uint32)(file->head.write_pos / file->ctrl->block_size);
+            lrcv->flush_point.lfn = lrp_point->lfn;
+            OG_LOG_RUN_INF("[Log Receiver] primary still on previous file asn %u (lfn %llu), "
+                           "resume from flush point [%u-%u/%u/%llu]",
+                           req->curr_point.asn, (uint64)req->curr_point.lfn,
+                           lrcv->flush_point.rst_id, lrcv->flush_point.asn, lrcv->flush_point.block_id,
+                           (uint64)lrcv->flush_point.lfn);
         } else {
             OG_LOG_RUN_ERR("[Log Receiver] current log point [%u-%u/%u/%llu] from primary is "
                            "less than standby current log [%u-%u]",
@@ -794,14 +1371,18 @@ static status_t lrcv_prepare_log_files(lrcv_context_t *lrcv, rep_query_status_re
             return OG_ERROR;
         }
     } else if (LRCV_LOG_POINT_ON_PRE_FILE(*lrp_point, file->head)) {
-        lrcv->flush_point = log_ctx->curr_point;
+        lrcv->flush_point = lrcv->stream_curr_point;
 
         if (!lrcv->reconnected) {
-            if (log_get_file_offset(lrcv->session, file->ctrl->name, &lrcv->recv_buf.read_buf,
-                                    (uint64 *)&file->head.write_pos, &curr_lfn, &scn) != OG_SUCCESS) {
-                OG_LOG_RUN_ERR("[Log Receiver] failed to get file offset for logfile[%u] %s, latest lfn %llu",
-                               log_ctx->curr_file, file->ctrl->name, curr_lfn);
-                return OG_ERROR;
+            if (lrcv_is_dss_log(lrcv)) {
+                curr_lfn = lrcv->stream_curr_point.lfn;
+            } else {
+                if (log_get_file_offset(lrcv->session, file->ctrl->name, &lrcv->recv_buf.read_buf,
+                                        (uint64 *)&file->head.write_pos, &curr_lfn, &scn) != OG_SUCCESS) {
+                    OG_LOG_RUN_ERR("[Log Receiver] failed to get file offset for logfile[%u] %s, latest lfn %llu",
+                                   lrcv_get_curr_file(lrcv), file->ctrl->name, curr_lfn);
+                    return OG_ERROR;
+                }
             }
         }
 
@@ -820,35 +1401,59 @@ static status_t lrcv_prepare_log_files(lrcv_context_t *lrcv, rep_query_status_re
         }
 
         OG_LOG_RUN_INF("[Log Receiver] lrp_point is on previous log");
+    } else if (file->head.asn == OG_INVALID_ASN || req->curr_point.lfn >= lrp_point->lfn) {
+        /*
+         * The replay point is after the current file (log-switch boundary:
+         * lrp sits at the start of the next file) or the current file is
+         * invalid.  Resume from the replay point in the primary's file
+         * representation; the first batch will switch the receiver's current
+         * file naturally.
+         */
+        lrcv->flush_point.rst_id = req->curr_point.rst_id;
+        lrcv->flush_point.asn = req->curr_point.asn;
+        lrcv->flush_point.block_id = 1;
+        /*
+         * Resume from the APPLIED point (rcy), not the available point (lrp):
+         * on a freshly built standby the local file may not contain the redo
+         * between rcy and lrp, and resuming from lrp would silently skip
+         * unapplied redo.  Any re-sent prefix is idempotent (the replay
+         * skips batches whose lfn is not ahead of rcy).
+         */
+        lrcv->flush_point.lfn = rcy_point->lfn;
+        OG_LOG_RUN_INF("[Log Receiver] stream %u replay point after current file, "
+                       "resume from applied point [%u-%u/%u/%llu]",
+                       lrcv->src_node_id, lrcv->flush_point.rst_id, lrcv->flush_point.asn,
+                       lrcv->flush_point.block_id, (uint64)lrcv->flush_point.lfn);
     } else {
-        knl_panic(file->head.asn == OG_INVALID_ASN);
+        knl_panic(0);
     }
 
     if (!lrcv->reconnected) {
-        log_ctx->free_size += log_file_freesize(file);
+        lrcv_set_free_size(lrcv, lrcv_get_free_size(lrcv) + log_file_freesize(file));
     }
 
     OG_LOG_RUN_INF("[Log Receiver] Set flush point to [%u-%u/%u/%llu], log free size is %llu",
                    lrcv->flush_point.rst_id, lrcv->flush_point.asn, lrcv->flush_point.block_id,
-                   (uint64)lrcv->flush_point.lfn, log_ctx->free_size);
+                   (uint64)lrcv->flush_point.lfn, lrcv_get_free_size(lrcv));
     return OG_SUCCESS;
 }
 
 static bool32 lrcv_log_ctrl_check(lrcv_context_t *lrcv, rep_query_status_req_t *req)
 {
-    log_context_t *log_ctx = &lrcv->session->kernel->redo_ctx;
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
     log_file_t *logfile = NULL;
     log_file_ctrl_t *ctrl_pri = NULL;
+    uint32 hwm = lrcv_get_logfile_hwm(lrcv);
 
-    if (req->log_num != log_ctx->logfile_hwm) {
+    if (req->log_num != hwm) {
         OG_LOG_RUN_ERR("[Log Receiver] Redo hwm [%u/%u] is no equal for primary/standby, need repair",
-                       req->log_num, log_ctx->logfile_hwm);
+                       req->log_num, hwm);
         return OG_FALSE;
     }
 
     ctrl_pri = (log_file_ctrl_t *)((char *)req + sizeof(rep_query_status_req_t));
-    for (uint32 i = 0; i < log_ctx->logfile_hwm; i++) {
-        logfile = &log_ctx->files[i];
+    for (uint32 i = 0; i < hwm; i++) {
+        logfile = &file_set->items[i];
 
         if (logfile->ctrl->flg != ctrl_pri->flg) {
             OG_LOG_RUN_ERR("[Log Receiver] %s flag %u is different from %s flag %u (0-normal, 1-dropped, 2-alarmed), "
@@ -887,13 +1492,13 @@ static bool32 lrcv_log_ctrl_check(lrcv_context_t *lrcv, rep_query_status_req_t *
     return OG_TRUE;
 }
 
-static void lrcv_repair_logfile_rstid(knl_session_t *session, reset_log_t *rst_log)
+static void lrcv_repair_logfile_rstid(lrcv_context_t *lrcv, reset_log_t *rst_log)
 {
     log_file_t *file = NULL;
-    log_context_t *ogx = &session->kernel->redo_ctx;
+    logfile_set_t *file_set = lrcv_get_file_set(lrcv);
 
-    for (uint32 i = 0; i < ogx->logfile_hwm; i++) {
-        file = &ogx->files[i];
+    for (uint32 i = 0; i < lrcv_get_logfile_hwm(lrcv); i++) {
+        file = &file_set->items[i];
 
         if (file->head.asn > rst_log->last_asn && file->head.rst_id < rst_log->rst_id) {
             OG_LOG_RUN_INF("[Log Receiver] logfile %s asn %u larger than resetlog asn %u, "
@@ -901,16 +1506,16 @@ static void lrcv_repair_logfile_rstid(knl_session_t *session, reset_log_t *rst_l
                            file->ctrl->name, file->head.asn, rst_log->last_asn, file->head.rst_id,
                            rst_log->rst_id, rst_log->rst_id);
             file->head.rst_id = rst_log->rst_id;
-            log_flush_head(session, file);
+            lrcv_flush_stream_head(lrcv, file);
         }
     }
 }
 
 static status_t lrcv_check_resetid(lrcv_context_t *lrcv, rep_query_status_req_t *req)
 {
-    log_point_t *point = &lrcv->session->kernel->redo_ctx.curr_point;
+    log_point_t *point = &lrcv->stream_curr_point;
     database_t *db = &lrcv->session->kernel->db;
-    log_point_t *rcy_point = &dtc_my_ctrl(lrcv->session)->rcy_point;
+    log_point_t *rcy_point = &lrcv_get_node_ctrl(lrcv)->rcy_point;
     reset_log_t *resetlog = &db->ctrl.core.resetlogs;
 
     if (req->rst_log.rst_id == resetlog->rst_id && resetlog->rst_id != 0 &&
@@ -956,9 +1561,13 @@ static status_t lrcv_check_resetid(lrcv_context_t *lrcv, rep_query_status_req_t 
 
 void lrcv_reset_primary_host(knl_session_t *session)
 {
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
-    errno_t ret = memset_sp(&lrcv->primary_host, sizeof(lrcv->primary_host), 0, sizeof(lrcv->primary_host));
-    knl_securec_check(ret);
+    lrcv_mgr_t *mgr = &session->kernel->lrcv_mgr;
+
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        errno_t ret = memset_sp(&mgr->streams[i].primary_host, sizeof(mgr->streams[i].primary_host), 0,
+                                sizeof(mgr->streams[i].primary_host));
+        knl_securec_check(ret);
+    }
 }
 
 static void lrcv_trigger_start_lsnd(lrcv_context_t *lrcv)
@@ -982,10 +1591,10 @@ static void lrcv_trigger_start_lsnd(lrcv_context_t *lrcv)
 
 static status_t lrcv_resetlog_check(lrcv_context_t *lrcv, rep_query_status_req_t *req)
 {
-    log_point_t *point = &lrcv->session->kernel->redo_ctx.curr_point;
+    log_point_t *point = &lrcv->stream_curr_point;
     database_t *db = &lrcv->session->kernel->db;
-    log_point_t *rcy_point = &dtc_my_ctrl(lrcv->session)->rcy_point;
-    log_point_t *lrp_point = &dtc_my_ctrl(lrcv->session)->lrp_point;
+    log_point_t *rcy_point = &lrcv_get_node_ctrl(lrcv)->rcy_point;
+    log_point_t *lrp_point = &lrcv_get_node_ctrl(lrcv)->lrp_point;
     reset_log_t *resetlog = &db->ctrl.core.resetlogs;
     bool32 resetid_changed = OG_FALSE;
 
@@ -1019,7 +1628,17 @@ static status_t lrcv_resetlog_check(lrcv_context_t *lrcv, rep_query_status_req_t
         return OG_ERROR;
     }
 
-    if (req->curr_point.lfn < point->lfn || LOG_POINT_FILE_LT(req->curr_point, *point)) {
+    /*
+     * "Standby faster" must be decided by LFN (the monotonic per-stream
+     * sequence), not by the (rst_id, asn) file representation: at a log-switch
+     * boundary the standby may be at the start of the next file while the
+     * primary is still at the end of the previous one with the same LFN, and
+     * the standby may be behind in LFN while its file asn looks higher.
+     * Fall back to the file comparison only when both LFN values are
+     * uninitialized.
+     */
+    if (point->lfn > req->curr_point.lfn ||
+        (point->lfn == 0 && req->curr_point.lfn == 0 && LOG_POINT_FILE_LT(req->curr_point, *point))) {
         lrcv_needrepair(lrcv);
         OG_LOG_RUN_ERR("[Log Receiver] Standby current point [%u/%u/%llu] is faster "
                        "than primary current point [%u/%u/%llu], need repair", point->rst_id, point->asn,
@@ -1074,7 +1693,7 @@ static status_t lrcv_resetlog_check(lrcv_context_t *lrcv, rep_query_status_req_t
         lsnd_mark_reconnect(lrcv->session, resetid_changed, lrcv->host_changed);
     }
 
-    lrcv_repair_logfile_rstid(lrcv->session, &req->rst_log);
+    lrcv_repair_logfile_rstid(lrcv, &req->rst_log);
 
     OG_LOG_RUN_INF("[Log Receiver] Resetlog check passed. Current reset log is [%u/%u/%llu], "
                    "current log point in redo context is [%u-%u/%u/%llu]",
@@ -1118,14 +1737,210 @@ static void lrcv_try_save_dbid(lrcv_context_t *lrcv)
     }
 }
 
-static status_t lrcv_process_query_status(lrcv_context_t *lrcv, rep_query_status_req_t *req)
+/*
+ * Bind this receiver connection to a redo stream identified by
+ * (src_dbid, src_node_id).  The stream is admitted once: if another active
+ * connection already serves the same stream, the new one is rejected
+ * (same-stream dual-primary protection).  The context is migrated to slot
+ * src_node_id when that slot is free, so that streams[src_node_id] always
+ * holds the stream with the same source node id (legacy paths use
+ * streams[0] as the default stream).
+ */
+static lrcv_context_t *lrcv_bind_stream(lrcv_context_t *lrcv, rep_query_status_req_t *req)
 {
+    knl_instance_t *kernel = lrcv->session->kernel;
+    lrcv_mgr_t *mgr = &kernel->lrcv_mgr;
+    uint32 src_node_id = req->src_node_id;
+    uint32 src_dbid = req->src_dbid;
+
+    /* legacy peer (version < ST_VERSION_2): single stream, node 0 */
+    if (req->version < ST_VERSION_2) {
+        src_node_id = 0;
+        src_dbid = req->dbid;
+    }
+
+    if (src_node_id >= OG_MAX_INSTANCES) {
+        lrcv_needrepair(lrcv);
+        OG_LOG_RUN_ERR("[Log Receiver] invalid source node id %u from primary, need repair", src_node_id);
+        return NULL;
+    }
+
+    cm_spin_lock(&mgr->lock, NULL);
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        lrcv_context_t *other = &mgr->streams[i];
+        if (other == lrcv) {
+            continue;
+        }
+        if (other->stream_bound && other->src_node_id == src_node_id && other->session != NULL) {
+            cm_spin_unlock(&mgr->lock);
+            OG_THROW_ERROR(ERR_DB_TOO_MANY_PRIMARY,
+                "another primary has connected for the same redo stream (src_node_id %u)", src_node_id);
+            OG_LOG_RUN_ERR("[Log Receiver] stream %u already has an active connection, reject the new one",
+                           src_node_id);
+            return NULL;
+        }
+    }
+
+    lrcv->src_node_id = src_node_id;
+    lrcv->src_dbid = src_dbid;
+    lrcv->stream_bound = OG_TRUE;
+
+    /*
+     * The stream identity lives in the context itself (src_node_id), so the
+     * slot index is only a pool allocation and does not need to match the
+     * stream id.  Never migrate the context between slots: another connection
+     * may be initializing the target slot concurrently, and overwriting it
+     * would corrupt that connection's session/buffers.
+     */
+    mgr->stream_count = MAX(mgr->stream_count, src_node_id + 1);
+    cm_spin_unlock(&mgr->lock);
+
+    /*
+     * While the database is not OPEN (e.g. standby in NOMOUNT before/while
+     * BUILD), the control file / node ctrl may not be loaded yet.  Do not
+     * initialize the per-stream file group from unloaded state; the stream
+     * simply stays not-ready until the database opens.
+     */
+    if (lrcv->session->kernel->db.status < DB_STATUS_OPEN) {
+        OG_LOG_RUN_INF("[Log Receiver] stream %u bound but database not open, wait for open", src_node_id);
+        return lrcv;
+    }
+
+    /* initialize per-stream log file group state */
+    logfile_set_t *file_set = LOGFILE_SET(lrcv->session, src_node_id);
+    dtc_node_ctrl_t *node_ctrl = dtc_get_ctrl(lrcv->session, src_node_id);
+    lrcv->file_set = file_set;
+    if (src_node_id == kernel->id) {
+        lrcv->stream_curr_file = kernel->redo_ctx.curr_file;
+        lrcv->stream_active_file = kernel->redo_ctx.active_file;
+        lrcv->stream_logfile_hwm = kernel->redo_ctx.logfile_hwm;
+        lrcv->stream_free_size = kernel->redo_ctx.free_size;
+        lrcv->stream_curr_point = kernel->redo_ctx.curr_point;
+    } else {
+        file_set->logfile_hwm = node_ctrl->log_hwm;
+        file_set->log_count = node_ctrl->log_count;
+        for (uint32 h = 0; h < OG_MAX_LOG_FILES; h++) {
+            lrcv->stream_handle[h] = -1;
+        }
+        /*
+         * Bind per-node ctrl pointers and open the source node's log files so
+         * the receiver can write this stream's redo into the correct file
+         * group.  File heads are derived from the node ctrl / replay point
+         * instead of being read from the device: DSS-backed devices may not
+         * support the byte-scanned head read, and the node ctrl already
+         * carries the authoritative rst_id/asn/write position.
+         */
+        for (uint32 i = 0; i < file_set->logfile_hwm; i++) {
+            log_file_t *file = &file_set->items[i];
+            file->ctrl = (log_file_ctrl_t *)db_get_log_ctrl_item(lrcv->session->kernel->db.ctrl.pages, i,
+                                                                 sizeof(log_file_ctrl_t),
+                                                                 lrcv->session->kernel->db.ctrl.log_segment,
+                                                                 src_node_id);
+            if (LOG_IS_DROPPED(file->ctrl->flg)) {
+                continue;
+            }
+
+            /* same not-used rule as dtc_log_file_not_used */
+            bool32 not_used = OG_FALSE;
+            if (node_ctrl->log_first <= node_ctrl->log_last) {
+                not_used = (i < node_ctrl->log_first || i > node_ctrl->log_last);
+            } else {
+                not_used = (i < node_ctrl->log_first && i > node_ctrl->log_last);
+            }
+            /*
+             * Open into the receiver's own handle array: the file structs of a
+             * remote node are shared with the archiver / dtc recovery, so the
+             * receiver must not touch their handles (avoid double close).
+             */
+            lrcv->stream_handle[i] = -1;
+            if (cm_open_device(file->ctrl->name, file->ctrl->type, knl_io_flag(lrcv->session),
+                               &lrcv->stream_handle[i]) != OG_SUCCESS) {
+                OG_LOG_RUN_WAR("[Log Receiver] failed to open stream log file=%s for src node %u",
+                               file->ctrl->name, src_node_id);
+                continue;
+            }
+
+            /*
+             * If the file head was not yet initialized (dtc recovery normally
+             * loads the real heads during open), derive it from the replay
+             * point so the prepare logic has a consistent current file.
+             */
+            if (not_used) {
+                /*
+                 * Keep the head loaded by dtc recovery (it may carry the real
+                 * rst_id/asn/write_pos of a previously used file); the receiver
+                 * only writes to the current file and re-initializes heads on
+                 * log switch.
+                 */
+                continue;
+            }
+            if (i == node_ctrl->log_last &&
+                (file->head.asn == 0 || file->head.asn != node_ctrl->lrp_point.asn)) {
+                /*
+                 * Prefer the REAL on-disk head: the BUILD snapshot writes the
+                 * remote node's redo into this file group, so write_pos/asn
+                 * must continue from the actual data end.  Resetting write_pos
+                 * to the head size would make the receiver overwrite the
+                 * build data from block 1 and desync the redo replay read
+                 * point.  Fall back to the ctrl-derived values only when the
+                 * device head cannot be read (e.g. ULOG-addressed DBStor).
+                 */
+                log_file_head_t disk_head;
+                errno_t err = memset_sp(&disk_head, sizeof(disk_head), 0, sizeof(disk_head));
+                knl_securec_check(err);
+                int32 head_size = (int32)CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+                if (file->ctrl->type != DEV_TYPE_ULOG &&
+                    cm_read_device(file->ctrl->type, lrcv->stream_handle[i], 0, &disk_head, head_size) == OG_SUCCESS &&
+                    disk_head.asn != 0 && disk_head.block_size != 0) {
+                    file->head = disk_head;
+                } else {
+                    file->head.rst_id = node_ctrl->lrp_point.rst_id;
+                    file->head.asn = node_ctrl->lrp_point.asn;
+                    file->head.block_size = file->ctrl->block_size;
+                    if (file->ctrl->type == DEV_TYPE_ULOG) {
+                        file->head.write_pos = 0;
+                    } else {
+                        file->head.write_pos =
+                            CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+                    }
+                }
+            }
+            OG_LOG_RUN_INF("[Log Receiver] stream %u logfile %s head [%u-%u] write_pos %llu",
+                           src_node_id, file->ctrl->name, file->head.rst_id, file->head.asn,
+                           (uint64)file->head.write_pos);
+        }
+        lrcv->stream_curr_file = node_ctrl->log_last;
+        lrcv->stream_active_file = node_ctrl->log_first;
+        lrcv->stream_logfile_hwm = file_set->logfile_hwm;
+        lrcv->stream_free_size = 0;
+        lrcv->stream_curr_point = node_ctrl->lrp_point;
+    }
+    lrcv->lsn_frontier = 0;
+    lrcv->stream_flushed_lfn = 0;
+
+    OG_LOG_RUN_INF("[Log Receiver] stream bound: src_dbid %u src_node_id %u, file set hwm %u, "
+                   "active %u current %u, lrp [%u-%u/%u/%llu]",
+                   lrcv->src_dbid, lrcv->src_node_id, lrcv->stream_logfile_hwm, lrcv->stream_active_file,
+                   lrcv->stream_curr_file, node_ctrl->lrp_point.rst_id, node_ctrl->lrp_point.asn,
+                   node_ctrl->lrp_point.block_id, (uint64)node_ctrl->lrp_point.lfn);
+    return lrcv;
+}
+
+static status_t lrcv_process_query_status(lrcv_context_t **lrcv_ptr, rep_query_status_req_t *req)
+{
+    lrcv_context_t *lrcv = *lrcv_ptr;
     database_t *db = &lrcv->session->kernel->db;
     char *buf = lrcv->send_buf.read_buf.aligned_buf;
     rep_msg_header_t *msg_hdr = (rep_msg_header_t *)buf;
     rep_query_status_resp_t *resp = (rep_query_status_resp_t *)(buf + sizeof(rep_msg_header_t));
     status_t status;
     bool32 is_building_cascaded = OG_FALSE;
+
+    lrcv = lrcv_bind_stream(lrcv, req);
+    if (lrcv == NULL) {
+        return OG_ERROR;
+    }
+    *lrcv_ptr = lrcv;
 
     lrcv->peer_repl_port = req->repl_port;
     lrcv->peer_role = req->is_standby ? PEER_STANDBY : PEER_PRIMARY;
@@ -1146,8 +1961,8 @@ static status_t lrcv_process_query_status(lrcv_context_t *lrcv, rep_query_status
             if (lrcv_prepare_log_files(lrcv, req) == OG_SUCCESS) {
                 resp->is_ready = OG_TRUE;
                 resp->flush_point = lrcv->flush_point;
-                resp->rcy_point = dtc_my_ctrl(lrcv->session)->rcy_point;
-                resp->replay_lsn = (uint64)lrcv->session->kernel->lsn;
+                resp->rcy_point = lrcv_get_node_ctrl(lrcv)->rcy_point;
+                resp->replay_lsn = (uint64)lrcv_get_node_ctrl(lrcv)->lsn;
                 lrcv->status = LRCV_PREPARE;
                 lrcv->reconnected = OG_TRUE;
 
@@ -1305,8 +2120,9 @@ static status_t lrcv_process_abr_req(lrcv_context_t *lrcv, rep_abr_req_t *abr_re
     return status;
 }
 
-static status_t lrcv_process_message(lrcv_context_t *lrcv)
+static status_t lrcv_process_message(lrcv_context_t **lrcv_ptr)
 {
+    lrcv_context_t *lrcv = *lrcv_ptr;
     char *extend_buf = lrcv->extend_buf.read_buf.aligned_buf;
 
     switch (lrcv->header.type) {
@@ -1335,14 +2151,33 @@ static status_t lrcv_process_message(lrcv_context_t *lrcv)
 
         case REP_QUERY_STATUS_REQ: {
             rep_query_status_req_t *rep_query_status_req = (rep_query_status_req_t *)extend_buf;
-            if (lrcv_process_query_status(lrcv, rep_query_status_req) != OG_SUCCESS) {
+            if (lrcv_process_query_status(lrcv_ptr, rep_query_status_req) != OG_SUCCESS) {
                 return OG_ERROR;
             }
+            lrcv = *lrcv_ptr;
             break;
         }
 
         case REP_HEART_BEAT_REQ: {
-            if (lrcv_process_heart_beat(lrcv->session) != OG_SUCCESS) {
+            /*
+             * Drain certificate: since version ST_VERSION_2 the heart beat
+             * request carries {curr_lsn, drained}.  A drained certificate
+             * promises that all redo with lsn <= curr_lsn has been generated
+             * and already delivered to this standby, so the per-stream LSN
+             * frontier can be pushed forward.  Red line: only update the
+             * frontier after this stream's redo has been flushed, which is
+             * guaranteed here because heart beats are processed after all
+             * preceding batches have been flushed synchronously.
+             */
+            if (lrcv->header.size > sizeof(rep_msg_header_t)) {
+                rep_hb_req_t *hb_req = (rep_hb_req_t *)extend_buf;
+                if (hb_req->drained) {
+                    lrcv_update_frontier(lrcv, hb_req->curr_lsn);
+                    OG_LOG_DEBUG_INF("[Log Receiver] stream %u drain certificate: curr_lsn %llu, frontier %llu",
+                                     lrcv->src_node_id, (uint64)hb_req->curr_lsn, (uint64)lrcv->lsn_frontier);
+                }
+            }
+            if (lrcv_process_heart_beat(lrcv) != OG_SUCCESS) {
                 return OG_ERROR;
             }
             break;
@@ -1671,20 +2506,20 @@ static status_t lrcv_process_req(lrcv_context_t *lrcv)
     return OG_SUCCESS;
 }
 
-static status_t lrcv_process_msg_loop(lrcv_context_t *lrcv)
+static status_t lrcv_process_msg_loop(lrcv_context_t **lrcv_ptr)
 {
     int32 recv_size;
 
     do {
-        if (lrcv_process_message(lrcv) != OG_SUCCESS) {
+        if (lrcv_process_message(lrcv_ptr) != OG_SUCCESS) {
             return OG_ERROR;
         }
     
-        if (lrcv_process_req(lrcv) != OG_SUCCESS) {
+        if (lrcv_process_req(*lrcv_ptr) != OG_SUCCESS) {
             return OG_ERROR;
         }
     
-        if (lrcv_receive(lrcv, 0, &recv_size) != OG_SUCCESS) {
+        if (lrcv_receive(*lrcv_ptr, 0, &recv_size) != OG_SUCCESS) {
             return OG_ERROR;
         }
     } while (recv_size > 0);
@@ -1737,7 +2572,7 @@ status_t lrcv_proc(lrcv_context_t *lrcv)
 
         if (recv_size > 0) {
             recv_retry_cnt = 0;
-            if (lrcv_process_msg_loop(lrcv) != OG_SUCCESS) {
+            if (lrcv_process_msg_loop(&lrcv) != OG_SUCCESS) {
                 lrcv_set_conn_err(lrcv);
                 return OG_ERROR;
             }
@@ -1760,12 +2595,18 @@ status_t lrcv_proc(lrcv_context_t *lrcv)
 void lrcv_close(knl_session_t *session)
 {
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
-    lrcv_context_t *lrcv = &kernel->lrcv_ctx;
+    lrcv_mgr_t *mgr = &kernel->lrcv_mgr;
 
     lrcv_reset_primary_host(session);
-    lrcv->thread.closed = OG_TRUE;
-    while (LRCV_IS_RUNING(lrcv) && lrcv->thread.closed) {
-        cm_sleep(10);
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        lrcv_context_t *lrcv = &mgr->streams[i];
+        if (lrcv->thread.closed) {
+            continue;
+        }
+        lrcv->thread.closed = OG_TRUE;
+        while (LRCV_IS_RUNING(lrcv) && lrcv->thread.closed) {
+            cm_sleep(10);
+        }
     }
 }
 
@@ -1775,7 +2616,7 @@ static status_t lrcv_get_primary_host(knl_session_t *session, int32 retry_count_
     lrcv_context_t *lrcv = NULL;
     errno_t ret;
 
-    while (session->kernel->lrcv_ctx.pipe == NULL) {
+    while (session->kernel->lrcv_mgr.streams[0].pipe == NULL) {
         if (retry_count == 0) {
             OG_LOG_RUN_ERR("[Log Receiver] abort wait connection ready during to exceeded max retries");
             OG_THROW_ERROR(ERR_PRI_NOT_CONNECT, "primary info");
@@ -1799,7 +2640,7 @@ static status_t lrcv_get_primary_host(knl_session_t *session, int32 retry_count_
         }
     }
 
-    lrcv = &session->kernel->lrcv_ctx;
+    lrcv = &session->kernel->lrcv_mgr.streams[0];
     ret = strncpy_s(host, host_buf_size, lrcv->primary_host, OG_HOST_NAME_BUFFER_SIZE - 1);
 
     knl_securec_check(ret);
@@ -1809,7 +2650,7 @@ static status_t lrcv_get_primary_host(knl_session_t *session, int32 retry_count_
 status_t lrcv_get_primary_server(knl_session_t *session, int32 retry_count,
     char *host, uint32 host_buf_size, uint16 *port)
 {
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
 
     if (lrcv_get_primary_host(session, retry_count, host, host_buf_size) != OG_SUCCESS) {
         return OG_ERROR;
@@ -1855,7 +2696,7 @@ bool32 lrcv_switchover_enabled(knl_session_t *session)
 
 void lrcv_trigger_backup_task(knl_session_t *session)
 {
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
     rep_bak_task_t *task = &lrcv->task;
 
     CM_ASSERT(task->status == BAK_TASK_DONE);
@@ -1871,7 +2712,7 @@ void lrcv_trigger_backup_task(knl_session_t *session)
 
 status_t lrcv_wait_task_process(knl_session_t *session)
 {
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
     rep_bak_task_t *task = &lrcv->task;
 
     while (task->status != BAK_TASK_DONE) {
@@ -1898,7 +2739,7 @@ status_t lrcv_wait_task_process(knl_session_t *session)
 
 void lrcv_wait_status_prepared(knl_session_t *session)
 {
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
 
     while (lrcv->status < LRCV_PREPARE) {
         if (lrcv->session == NULL || lrcv->session->killed) {
@@ -1911,7 +2752,7 @@ void lrcv_wait_status_prepared(knl_session_t *session)
 
 void lrcv_clear_needrepair_for_failover(knl_session_t *session)
 {
-    session->kernel->lrcv_ctx.status = LRCV_DISCONNECTED;
+    session->kernel->lrcv_mgr.streams[0].status = LRCV_DISCONNECTED;
     session->kernel->lftc_client_ctx.arch_lost = OG_FALSE;
     session->kernel->rcy_ctx.log_decrypt_failed = OG_FALSE;
 }

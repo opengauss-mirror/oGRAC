@@ -436,19 +436,30 @@ void log_flush_head(knl_session_t *session, log_file_t *file)
     /* since rebuild ctrlfiles was supported, the log file ctrl info was backup in the first block of log file. in
      * order not to overwrite it, we need to read it before write in flush log file head */
     int32 size = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+    /*
+     * Read-modify-write keeps the bytes after the file head in the first block
+     * (e.g. a backup of the log ctrl).  If the read fails, write only the head
+     * itself so that a transient standby read failure does not stop the receiver.
+     */
+    int32 head_size = size;
     if (cm_read_device(file->ctrl->type, file->handle, 0, log_head_buf, size) != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[LOG] failed to read %s ", file->ctrl->name);
-        CM_ABORT(0, "[LOG] ABORT INFO: read redo head:%s, offset:%u, size:%lu failed.", file->ctrl->name, 0,
-                 sizeof(log_file_head_t));
+        if (!DB_IS_CLUSTER(session) || DB_IS_PRIMARY(&session->kernel->db) ||
+            cm_dbs_is_enable_dbs() || ENABLE_PARA_LOG_FLUSH(session)) {
+            OG_LOG_RUN_ERR("[LOG] failed to read %s", file->ctrl->name);
+            CM_ABORT(0, "[LOG] ABORT INFO: read redo head:%s failed.", file->ctrl->name);
+            return;
+        }
+        OG_LOG_RUN_WAR("[LOG] failed to read %s head, write head only", file->ctrl->name);
+        head_size = (int32)sizeof(log_file_head_t);
     }
-
+    /* A failed read may leave arbitrary bytes in the buffer. Both paths must
+     * overwrite the head; a successful read additionally preserves the tail. */
     *(log_file_head_t *)log_head_buf = file->head;
 
-    size = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
-    if (cm_write_device(file->ctrl->type, file->handle, 0, log_head_buf, size) != OG_SUCCESS) {
+    if (cm_write_device(file->ctrl->type, file->handle, 0, log_head_buf, head_size) != OG_SUCCESS) {
         OG_LOG_ALARM(WARN_FLUSHREDO, "'file-name':'%s'}", file->ctrl->name);
         CM_ABORT(0, "[LOG] ABORT INFO: flush redo file:%s, offset:%u, size:%lu failed.", file->ctrl->name, 0,
-                 sizeof(log_file_head_t));
+                 (unsigned long)head_size);
     }
 
     if (ENABLE_PARA_LOG_FLUSH(session)) {
@@ -1868,7 +1879,7 @@ void log_recycle_file(knl_session_t *session, log_point_t *point)
     }
 
     log_context_t *ogx = &session->kernel->redo_ctx;
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
     arch_log_id_t last_arch_log;
 
     arch_last_archived_log(session, ARCH_DEFAULT_DEST, &last_arch_log);
@@ -3349,17 +3360,35 @@ status_t log_get_file_head(const char *file_name, log_file_head_t *head)
 {
     int32 handle = OG_INVALID_HANDLE;
     device_type_t type = cm_device_type(file_name);
+    aligned_buf_t read_buf = { 0 };
+
     if (cm_open_device(file_name, type, 0, &handle) != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[LOG] failed to open %s", file_name);
         return OG_ERROR;
     }
 
-    if (cm_read_device(type, handle, 0, head, sizeof(log_file_head_t)) != OG_SUCCESS) {
+    /*
+     * RAW/ULOG devices require the read buffer to be 512B aligned; a stack
+     * buffer is not guaranteed to be aligned, so use an aligned heap buffer.
+     */
+    if (cm_aligned_malloc(CM_CALC_ALIGN(sizeof(log_file_head_t), FILE_BLOCK_SIZE), "log file head",
+                          &read_buf) != OG_SUCCESS) {
+        cm_close_device(type, &handle);
+        OG_LOG_RUN_ERR("[LOG] failed to alloc buffer for %s", file_name);
+        return OG_ERROR;
+    }
+
+    if (cm_read_device(type, handle, 0, read_buf.aligned_buf,
+                       CM_CALC_ALIGN(sizeof(log_file_head_t), FILE_BLOCK_SIZE)) != OG_SUCCESS) {
+        cm_aligned_free(&read_buf);
         cm_close_device(type, &handle);
         OG_LOG_RUN_ERR("[LOG] failed to read %s", file_name);
         return OG_ERROR;
     }
 
+    errno_t err = memcpy_sp(head, sizeof(log_file_head_t), read_buf.aligned_buf, sizeof(log_file_head_t));
+    knl_securec_check(err);
+    cm_aligned_free(&read_buf);
     cm_close_device(type, &handle);
     return OG_SUCCESS;
 }

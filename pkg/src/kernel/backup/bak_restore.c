@@ -2969,6 +2969,18 @@ status_t rst_stream_read_file(knl_session_t *session)
     if (rst_stream_read_prepare(session, recv_stream, head, &ignore_logfile) != OG_SUCCESS) {
         return OG_ERROR;
     }
+    if (type == BACKUP_DATA_FILE && BAK_IS_FULL_BUILDING(bak)) {
+        // parallel restore procs update the break-point track file on every data page
+        // write, make sure it exists before they start (first link creates it, breakpoint
+        // build keeps the existing progress file)
+        build_progress_t *build_progress = &bak->progress.build_progress;
+        build_progress->stage = bak->progress.stage;
+        build_progress->curr_file_index = bak->curr_file_index;
+        build_progress->data_offset = DEFAULT_PAGE_SIZE(session);
+        if (rst_update_track_file(session, bak, bak->is_first_link) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
+    }
     rst_assign_stream_restore_task(session, &common_proc->ctrl);
 
     if (rst_recv_stream_data(session, ignore_logfile) != OG_SUCCESS) {
