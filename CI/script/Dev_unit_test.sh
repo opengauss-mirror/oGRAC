@@ -104,6 +104,10 @@ fi
 echo
 echo "run server_test success!"
 
+if ! timeout 5s "${OGDB_CODE_PATH}/output/bin/explain_width_test" >> "${GTEST_RUN_LOG}" 2>&1; then
+    error "run explain_width_test error!"
+fi
+
 echo
 echo -n "run common_test ..."
 ${OGDB_CODE_PATH}/output/bin/common_test --gtest_output=xml:${GTEST_RESULT_PATH}/ >> ${GTEST_RUN_LOG} 2>&1
