@@ -354,6 +354,8 @@ typedef struct st_dtc_rcy_node {
     log_point_t recovery_read_end_point;
     uint64 latest_lsn;
     uint64 latest_rcy_end_lsn;
+    /* LSN through which this source has certified all redo as flushed and sent. */
+    uint64 lsn_frontier;
     dtc_rcy_lsn_records_t lsn_records; // lsn records for reduce redundant log
     void *para_stream;
     bool32 para_peek_ready;

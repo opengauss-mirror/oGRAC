@@ -3099,6 +3099,53 @@ static void dtc_rcy_get_page_id(bool32 recover_flag, page_id_t *page_id)
     }
 }
 
+/*
+ * An open cluster standby uses per-source drain frontiers to preserve replay
+ * order across redo streams. Startup recovery does not use this barrier.
+ */
+static inline bool32 dtc_rcy_continuous_apply(knl_session_t *session)
+{
+    return (session != NULL && DB_STATUS(session) == DB_STATUS_OPEN &&
+            !DB_IS_PRIMARY(&session->kernel->db) && DB_IS_CLUSTER(session));
+}
+
+static uint64 dtc_rcy_min_frontier(knl_session_t *session)
+{
+    dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+    uint64 min_frontier = OG_INVALID_ID64;
+    uint32 live_streams = 0;
+
+    for (uint32 i = 0; i < dtc_rcy->node_count; i++) {
+        uint32 node_id = dtc_rcy->rcy_nodes[i].node_id;
+        lrcv_context_t *lrcv = lrcv_get_stream(session, node_id);
+
+        /*
+         * Only gate on nodes that actually have a live redo stream.  A node
+         * that has no bound stream (e.g. the standby node itself is not open,
+         * or the matching primary node is not running) produces no redo, so it
+         * must not hold the whole cluster back with a permanent frontier of 0.
+         * A bound stream that is not yet READY (still connecting) is skipped
+         * for the same reason: the primary side will re-send from the last
+         * acknowledged point once the connection is up.
+         */
+        if (lrcv == NULL || !lrcv->stream_bound || lrcv->status != LRCV_READY) {
+            continue;
+        }
+
+        uint64 frontier = lrcv->lsn_frontier;
+        if (frontier < min_frontier) {
+            min_frontier = frontier;
+        }
+        live_streams++;
+    }
+
+    if (live_streams == 0) {
+        /* No live source: safe wait, nothing can be replayed yet. */
+        return 0;
+    }
+    return min_frontier;
+}
+
 static void check_node_read_end(uint32 node_id)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
@@ -3106,6 +3153,16 @@ static void check_node_read_end(uint32 node_id)
     // if no more log, set recover done
     if (!rcy_node->not_finished[rcy_node->read_buf_read_index] ||
         rcy_node->read_size[rcy_node->read_buf_read_index] == 0) {
+        /*
+         * A 0-byte read ends this replay cycle for the node.  In continuous
+         * standby apply the LRPL loop restarts a fresh cycle every few
+         * seconds, so the node's late-arriving redo is picked up by the next
+         * cycle.  Cross-node ordering within a cycle is preserved by the
+         * drain-certificate LSN frontier gate in dtc_rcy_fetch_log_batch, so
+         * ending the cycle here is safe and lets the cycle complete its full
+         * checkpoint (which is what makes the standby's applied data durable
+         * across a restart).
+         */
         rcy_node->recover_done = OG_TRUE;
         if (dtc_rcy->phase == PHASE_ANALYSIS) {
             OG_LOG_RUN_INF("[DTC RCY] analysis read end point[asn(%u)-block_id(%u)-rst_id(%llu)-lfn(%llu)-lsn(%llu)]",
@@ -4419,6 +4476,28 @@ void dtc_rcy_next_file(knl_session_t *session, uint32 idx, bool32 *need_more_log
             *need_more_log = OG_FALSE;
             return;
         }
+        if (dtc_rcy_continuous_apply(session)) {
+            /*
+             * Continuous standby apply: the receiver keeps appending to the
+             * current log file.  A 0-byte read at the current file only means
+             * no new redo has arrived yet; advancing here would run the read
+             * point to an ever-increasing asn and spin forever in the archive
+             * lookup.  Wait instead.  Once the apply genuinely crosses into
+             * the next file (log switch), the point asn changes and this
+             * guard no longer matches.
+             */
+            for (uint32 i = 0; i < log_set->logfile_hwm; i++) {
+                log_file_t *f = &log_set->items[i];
+                if (LOG_IS_DROPPED(f->ctrl->flg)) {
+                    continue;
+                }
+                if (f->ctrl->status == LOG_FILE_CURRENT && f->head.rst_id == point->rst_id &&
+                    f->head.asn == point->asn) {
+                    *need_more_log = OG_FALSE;
+                    return;
+                }
+            }
+        }
     }
     if (point->rst_id < reset_log->rst_id && point->asn == ctrl->last_asn && (uint64)point->lfn == ctrl->last_lfn) {
         point->rst_id++;
@@ -4613,12 +4692,62 @@ static status_t dtc_rcy_read_online_log(knl_session_t *session, uint32 file_id, 
 
     int64 file_size = file->head.write_pos;
     if (file->ctrl->status == LOG_FILE_CURRENT) {
-        // the write_pos of current log file is not accurate
-        file_size = file->ctrl->size;
+        if (dtc_rcy_continuous_apply(session)) {
+            /*
+             * Continuous standby apply: the receiver updates head.write_pos
+             * synchronously after every batch it writes, so on an OPEN
+             * standby it is accurate.  Using ctrl->size here would make us
+             * read the whole ring buffer, most of which is uninitialized tail;
+             * the batch walker then sees a zero-sized "batch" and spins
+             * forever at the valid-data boundary.
+             */
+            file_size = file->head.write_pos;
+        } else {
+            // the write_pos of current log file is not accurate
+            file_size = file->ctrl->size;
+        }
     }
 
     int64 offset = (int64)point->block_id * file->ctrl->block_size;
+    /*
+     * The receiver persists the log file head lazily; after an unclean stop
+     * the on-disk head.write_pos (and the ctrl status used above) can be far
+     * behind the redo actually written.  When the read point is already past
+     * the recorded size, re-scan the file to recover the true end of valid
+     * redo; otherwise startup recovery treats the file as empty and skips the
+     * un-applied tail.
+     */
+    /*
+     * Startup (non-continuous) recovery only: once the receiver is appending
+     * on an OPEN standby the in-memory head is accurate, and a caught-up read
+     * point sitting exactly at the end of valid data is the normal waiting
+     * state (no scan needed).  During startup recovery the on-disk head may
+     * be stale, so recover the true size before reading.
+     */
+    if (!DB_IS_PRIMARY(&session->kernel->db) && !cm_dbs_is_enable_dbs() &&
+        !dtc_rcy_continuous_apply(session) && offset >= file_size) {
+        uint64 true_pos = 0;
+        uint64 latest_lfn = 0;
+        uint64 last_scn = 0;
+        aligned_buf_t *scan_buf = &rcy_node->read_buf[rcy_node->read_buf_write_index];
+        if (log_get_file_offset(session, file->ctrl->name, scan_buf, &true_pos, &latest_lfn, &last_scn) == OG_SUCCESS &&
+            true_pos > (uint64)offset) {
+            OG_LOG_RUN_INF("[DTC RCY] recover file %s write pos %llu -> %llu for node %u (read point %u/%u/%lld)",
+                           file->ctrl->name, (uint64)file_size, true_pos, rcy_log_point->node_id, point->asn,
+                           point->block_id, offset);
+            file_size = (int64)true_pos;
+        }
+    }
     int64 size_need_read = file_size - offset;
+    if (size_need_read < 0) {
+        /*
+         * Continuous standby apply: after startup recovery the in-memory file
+         * head write_pos may still be the pre-recovery value, so the read
+         * offset can be ahead of it.  That only means no *new* redo has
+         * arrived yet; treat it as an empty read instead of aborting.
+         */
+        size_need_read = 0;
+    }
     // Obtain logs based on the LSN for DBStor.
     if (cm_dbs_is_enable_dbs() == OG_TRUE) {
         offset = point->lsn + 1;    // read redo data after rcy_point.
@@ -4966,7 +5095,8 @@ static void dtc_standby_update_lrp(knl_session_t *session, uint32 idx, uint32 si
         left_size = size_read - rcy_node->read_pos[rcy_node->read_buf_write_index];
         OG_LOG_DEBUG_INF("[DTC RCY] dtc standby update lrp idx=%u size_read=%u process batch left_size=%u", idx,
                          size_read, left_size);
-        if (left_size < sizeof(log_batch_t) || left_size < tmp_batch->space_size) {
+        if (left_size < sizeof(log_batch_t) || !dtc_rcy_validate_batch(tmp_batch) ||
+            left_size < tmp_batch->space_size) {
             break;
         }
         batch = dtc_rcy_get_curr_batch(dtc_rcy, idx, rcy_node->read_buf_write_index);
@@ -4993,6 +5123,179 @@ static void dtc_standby_update_lrp(knl_session_t *session, uint32 idx, uint32 si
     return;
 }
 
+/*
+ * Continuous standby apply only: the BUILD snapshot records rcy_point with
+ * the primary-side file layout (block id), but the standby's own per-node log
+ * file may hold the same redo at different physical offsets -- the build
+ * initializes the current file freshly and the receiver appends sequentially
+ * from the file header.  A read cursor that blindly starts at
+ * rcy_point.block_id therefore lands in the middle of the batch sequence and
+ * reports "not continuous" for every batch.  Scan the online file for the
+ * batch whose lfn is rcy_point.lfn + 1 and move the read cursor to its exact
+ * local position.  If that batch has not arrived yet, park the cursor at the
+ * end of the valid data (the receiver keeps appending there); if the file
+ * starts ahead of the apply point (the primary resumed past a build tail that
+ * is not present locally), park at the first batch and let the fetch loop
+ * jump the apply point over the absent prefix.
+ */
+static void dtc_rcy_continuous_align_read_point(knl_session_t *session, uint32 idx)
+{
+    dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+    reform_rcy_node_t *rcy_log_point = &dtc_rcy->rcy_log_points[idx];
+    log_point_t *point = &rcy_log_point->rcy_write_point;
+    logfile_set_t *log_set = LOGFILE_SET(session, rcy_log_point->node_id);
+    log_file_t *file = NULL;
+    uint64 target_lfn = (uint64)rcy_log_point->rcy_point.lfn + 1;
+    uint32 file_id = OG_INVALID_ID32;
+    int32 handle = OG_INVALID_HANDLE;
+    device_type_t type;
+    uint64 file_size;
+    uint64 offset;
+    uint64 first_lfn = 0;
+    uint64 last_lfn = 0;
+    uint32 first_block = 0;
+    uint32 target_block = 0;
+    uint32 end_block = 0;
+    bool32 have_first = OG_FALSE;
+    char *buf = NULL;
+    int64 buf_size = 0;
+
+    for (uint32 fi = 0; fi < log_set->logfile_hwm; fi++) {
+        log_file_t *f = &log_set->items[fi];
+        if (LOG_IS_DROPPED(f->ctrl->flg)) {
+            continue;
+        }
+        if (f->ctrl->status == LOG_FILE_CURRENT) {
+            file_id = fi;
+            break;
+        }
+        if (file_id == OG_INVALID_ID32 && f->head.rst_id == point->rst_id && f->head.asn == point->asn) {
+            file_id = fi;
+        }
+    }
+
+    if (file_id == OG_INVALID_ID32) {
+        return;
+    }
+
+    file = &log_set->items[file_id];
+    /*
+     * Keep the persisted applied point on the file the redo actually lives
+     * in.  A stale rcy_point.asn (e.g. from an earlier archive lookup during
+     * the previous cycle) would otherwise be saved back to the ctrl and make
+     * the next restart start from a non-existent file.
+     */
+    rcy_log_point->rcy_point.rst_id = file->head.rst_id;
+    rcy_log_point->rcy_point.asn = file->head.asn;
+    file_size = file->head.write_pos;
+    if (file_size <= CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size)) {
+        /* No redo yet: park the cursor at the receiver's flush position. */
+        lrcv_context_t *lrcv = lrcv_get_stream(session, rcy_log_point->node_id);
+        if (lrcv != NULL && lrcv->stream_bound && lrcv->status == LRCV_READY &&
+            lrcv->flush_point.rst_id == file->head.rst_id && lrcv->flush_point.asn == file->head.asn) {
+            point->rst_id = lrcv->flush_point.rst_id;
+            point->asn = lrcv->flush_point.asn;
+            point->block_id = lrcv->flush_point.block_id;
+        } else {
+            point->rst_id = file->head.rst_id;
+            point->asn = file->head.asn;
+            point->block_id = 1;
+        }
+        OG_LOG_RUN_INF("[DTC RCY] align running cycle node %u read point to empty file [%u-%u/%u] (rcy lfn %llu)",
+                       rcy_log_point->node_id, point->rst_id, point->asn, point->block_id,
+                       (uint64)rcy_log_point->rcy_point.lfn);
+        return;
+    }
+
+    cm_latch_s(&file->latch, session->id, OG_FALSE, NULL);
+    type = file->ctrl->type;
+    if (cm_open_device(file->ctrl->name, type, knl_io_flag(session), &handle) != OG_SUCCESS) {
+        cm_unlatch(&file->latch, NULL);
+        return;
+    }
+
+    aligned_buf_t scan_buf = { 0 };
+    buf_size = MAX((int64)LOG_LGWR_BUF_SIZE(session), (int64)OG_MAX_BATCH_SIZE + SIZE_K(4));
+    if (cm_aligned_malloc(buf_size, "dtc rcy scan buffer", &scan_buf) != OG_SUCCESS) {
+        cm_close_device(type, &handle);
+        cm_unlatch(&file->latch, NULL);
+        return;
+    }
+    buf = scan_buf.aligned_buf;
+
+    offset = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+    bool32 scan_done = OG_FALSE;
+    while (!scan_done && offset + sizeof(log_batch_t) <= file_size) {
+        int64 size = (int64)(file_size - offset);
+        if (size > buf_size) {
+            size = buf_size;
+        }
+        if (cm_read_device(type, handle, (int64)offset, buf, (int32)size) != OG_SUCCESS) {
+            break;
+        }
+
+        int64 remain = size;
+        char *cur = buf;
+        while (remain >= (int64)sizeof(log_batch_t)) {
+            log_batch_t *batch = (log_batch_t *)cur;
+            if (!dtc_rcy_validate_batch(batch) || batch->space_size > remain) {
+                scan_done = OG_TRUE;
+                break;
+            }
+            uint32 blk = (uint32)(offset / file->ctrl->block_size);
+            if (!have_first) {
+                have_first = OG_TRUE;
+                first_lfn = batch->head.point.lfn;
+                first_block = blk;
+            }
+            last_lfn = batch->head.point.lfn;
+            end_block = (uint32)((offset + batch->space_size) / file->ctrl->block_size);
+            if (batch->head.point.lfn == target_lfn) {
+                target_block = blk;
+            }
+            offset += batch->space_size;
+            remain -= batch->space_size;
+            cur += batch->space_size;
+        }
+        /* A batch that does not fit in the remaining chunk is an incomplete
+         * tail (the receiver is still writing); stop scanning here. */
+    }
+
+    cm_aligned_free(&scan_buf);
+    cm_close_device(type, &handle);
+    cm_unlatch(&file->latch, NULL);
+
+    if (!have_first) {
+        return;
+    }
+
+    if (target_block != 0) {
+        point->rst_id = file->head.rst_id;
+        point->asn = file->head.asn;
+        point->block_id = target_block;
+        OG_LOG_RUN_INF("[DTC RCY] align running cycle node %u read point to batch lfn %llu at [%u-%u/%u] "
+                       "(rcy lfn %llu)",
+                       rcy_log_point->node_id, (uint64)target_lfn, point->rst_id, point->asn, point->block_id,
+                       (uint64)rcy_log_point->rcy_point.lfn);
+    } else if (target_lfn < first_lfn) {
+        point->rst_id = file->head.rst_id;
+        point->asn = file->head.asn;
+        point->block_id = first_block;
+        OG_LOG_RUN_INF("[DTC RCY] align running cycle node %u read point to first batch lfn %llu at [%u-%u/%u] "
+                       "(rcy lfn %llu, missing prefix)",
+                       rcy_log_point->node_id, (uint64)first_lfn, point->rst_id, point->asn, point->block_id,
+                       (uint64)rcy_log_point->rcy_point.lfn);
+    } else {
+        point->rst_id = file->head.rst_id;
+        point->asn = file->head.asn;
+        point->block_id = end_block;
+        OG_LOG_RUN_INF("[DTC RCY] align running cycle node %u read point to end [%u-%u/%u] (file lfn %llu, "
+                       "rcy lfn %llu, waiting for more redo)",
+                       rcy_log_point->node_id, point->rst_id, point->asn, point->block_id, (uint64)last_lfn,
+                       (uint64)rcy_log_point->rcy_point.lfn);
+    }
+}
+
 status_t dtc_rcy_read_node_log(knl_session_t *session, uint32 idx, uint32 *size_read)
 {
     dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
@@ -5001,6 +5304,39 @@ status_t dtc_rcy_read_node_log(knl_session_t *session, uint32 idx, uint32 *size_
 
     status_t status;
     uint64_t tv_begin;
+
+    if (dtc_rcy_continuous_apply(session)) {
+        /*
+         * Continuous standby apply: wait until the receiver has bound the
+         * stream and fixed the per-node file heads, otherwise the read point
+         * may start before the file layout is consistent (the BUILD snapshot
+         * leaves the current file freshly initialized) and run away through
+         * non-existent files/archives.
+         */
+        lrcv_context_t *lrcv = lrcv_get_stream(session, rcy_log_point->node_id);
+        while (lrcv != NULL && !lrcv->stream_bound) {
+            if (session->killed || session->canceled) {
+                *size_read = 0;
+                return OG_SUCCESS;
+            }
+            cm_sleep(10);
+            lrcv = lrcv_get_stream(session, rcy_log_point->node_id);
+        }
+        if (lrcv != NULL && lrcv->stream_bound && rcy_node->latest_lsn == 0) {
+            /*
+             * A stream may bind while a continuous apply cycle is already
+             * running (e.g. the second primary node joins later).  The
+             * bind-time alignment fixes the ctrl, but this cycle's read point
+             * was initialized from the stale ctrl (primary-side block id), so
+             * re-locate it against the standby's own file content here -- but
+             * ONLY before the very first read of this cycle (latest_lsn == 0).
+             * Once the read starts progressing, the read cursor legitimately
+             * trails the receiver's flush position (the apply lags the
+             * receive), so re-aligning would skip unapplied redo.
+             */
+            dtc_rcy_continuous_align_read_point(session, idx);
+        }
+    }
 
     rcy_node->read_pos[rcy_node->read_buf_write_index] = 0;
     rcy_node->write_pos[rcy_node->read_buf_write_index] = 0;
@@ -5017,7 +5353,15 @@ status_t dtc_rcy_read_node_log(knl_session_t *session, uint32 idx, uint32 *size_
     if (logfile_id != OG_INVALID_ID32) {
         oGRAC_record_io_stat_begin(IO_RECORD_EVENT_RECOVERY_READ_ONLINE_LOG, &tv_begin);
         status = dtc_rcy_read_online_log(session, logfile_id, idx, size_read);
-        log_unlatch_file(session, logfile_id);
+        /*
+         * Release the latch on the PER-NODE file set.  log_unlatch_file only
+         * touches redo_ctx.files (the local node's set); for a remote node's
+         * stream the latch was taken on LOGFILE_SET(session, node_id), so
+         * unlatching the local set would silently leak the remote latch and
+         * deadlock the receiver/read path on the next access.
+         */
+        logfile_set_t *log_set = LOGFILE_SET(session, rcy_log_point->node_id);
+        cm_unlatch(&log_set->items[logfile_id].latch, NULL);
         oGRAC_record_io_stat_end(IO_RECORD_EVENT_RECOVERY_READ_ONLINE_LOG, &tv_begin);
         if (!DB_IS_PRIMARY(&session->kernel->db) && (*size_read == 0)) {
             OG_LOG_DEBUG_INF("[DTC RCY] finish read online redo log of crashed node=%u, logfile_id=%u, size_read=%u",
@@ -5766,9 +6110,53 @@ static status_t dtc_rcy_fetch_log_batch(knl_session_t *session, log_batch_t **ba
                 }
             }
 
+            /*
+             * Continuous standby apply: the BUILD snapshot may leave the
+             * current file with the already-applied tail redo still present
+             * (or the receiver may re-send a batch that was applied before a
+             * reconnect).  A batch whose lfn is not ahead of the apply point
+             * is a duplicate, not a gap: skip it by advancing the file cursor
+             * and keep applying, instead of declaring recovery done.
+             */
+            if (dtc_rcy_continuous_apply(session) &&
+                batch->head.point.lfn <= rcy_log_point->rcy_point.lfn) {
+                OG_LOG_DEBUG_INF(
+                    "[DTC RCY] standby apply skip already-applied batch lfn %llu (rcy lfn %llu) node %u",
+                    (uint64)batch->head.point.lfn, (uint64)rcy_log_point->rcy_point.lfn,
+                    rcy_log_point->node_id);
+                rcy_node->read_pos[rcy_node->read_buf_read_index] += batch->space_size;
+                rcy_node->curr_file_length += batch->space_size;
+                rcy_log_point->rcy_point.block_id += batch->space_size / rcy_node->blk_size;
+                DTC_RCY_FETCH_DIAG_ACCUM(node_scan_us, node_scan_begin);
+                continue;
+            }
+
             if (!LFN_IS_CONTINUOUS(batch->head.point.lfn, rcy_log_point->rcy_point.lfn)) {
                 // batch is not continuous
-                if (DB_IS_MAXFIX(session)) {
+                if (dtc_rcy_continuous_apply(session) && !DB_IS_MAXFIX(session) &&
+                    batch->head.point.lfn > rcy_log_point->rcy_point.lfn + 1) {
+                    /*
+                     * Continuous standby apply: the receiver resumes from the
+                     * point it advertised, and the primary may have advanced
+                     * past a build tail that is not present in the standby's
+                     * local file (freshly initialized by the build).  The
+                     * batches between rcy and this batch do not exist
+                     * anywhere on the standby; jumping the apply point keeps
+                     * the standby moving instead of declaring recovery done
+                     * (which would freeze replay for this node forever).
+                     */
+                    OG_LOG_RUN_WAR("[DTC RCY] standby apply jumps over missing redo node=%u from lfn %llu "
+                                   "to lfn %llu, batch [%u-%u/%u]",
+                                   rcy_log_point->node_id, (uint64)rcy_log_point->rcy_point.lfn,
+                                   (uint64)(batch->head.point.lfn - 1), batch->head.point.rst_id,
+                                   batch->head.point.asn, batch->head.point.block_id);
+                    rcy_log_point->rcy_point.lfn = batch->head.point.lfn - 1;
+                    rcy_log_point->rcy_point.rst_id = batch->head.point.rst_id;
+                    rcy_log_point->rcy_point.asn = batch->head.point.asn;
+                    if (cm_dbs_is_enable_dbs() == OG_TRUE) {
+                        rcy_log_point->rcy_point.lsn = batch->lsn;
+                    }
+                } else if (DB_IS_MAXFIX(session)) {
                     OG_LOG_RUN_WAR("[DTC RCY] damage log batch skipped,not continuous batch from instance %u, "
                                    "recovery with point [%u-%u/%u/%llu/%llu],current point [%u-%u/%u/%llu/%llu]",
                                    rcy_log_point->node_id, batch->head.point.rst_id, batch->head.point.asn,
@@ -5844,6 +6232,25 @@ static status_t dtc_rcy_fetch_log_batch(knl_session_t *session, log_batch_t **ba
 
         if (!batch_loaded && retry_rbp_tail) {
             retry_fetch = OG_TRUE;
+        }
+    }
+
+    if (batch_loaded) {
+        /*
+         * Drain-certificate LSN barrier: only replay batches whose LSN does
+         * not exceed the minimum per-node frontier, so that a slow/empty
+         * source node cannot be bypassed (which would reorder same-page redo
+         * across nodes and break PCN consistency).  Blocked batches are
+         * simply not selected; the caller waits and retries.
+         */
+        if (dtc_rcy_continuous_apply(session)) {
+            uint64 min_frontier = dtc_rcy_min_frontier(session);
+            if (curr_batch_lsn > min_frontier) {
+                OG_LOG_DEBUG_INF(
+                    "[DTC RCY] standby apply gated by drain frontier: batch lsn %llu > min frontier %llu",
+                    curr_batch_lsn, min_frontier);
+                batch_loaded = OG_FALSE;
+            }
         }
     }
 

@@ -86,6 +86,7 @@ typedef enum e_rep_login_type {
 typedef enum en_query_status_version {
     ST_VERSION_0 = 0,
     ST_VERSION_1 = 1, // from this version, primary can notify standby of setting need repair
+    ST_VERSION_2 = 2, // from this version, messages carry src_dbid/src_node_id for redo stream
 } query_status_version_t;
 
 typedef struct st_rep_msg_header {
@@ -99,6 +100,8 @@ typedef struct st_rep_batch_req {
     log_point_t curr_point;
     knl_scn_t scn;
     compress_algo_e compress_alg;
+    uint32 src_dbid;    // source database id (redo stream identity)
+    uint32 src_node_id; // source node id (redo stream identity)
 } rep_batch_req_t;
 
 typedef struct st_rep_batch_resp {
@@ -121,7 +124,9 @@ typedef struct st_rep_query_status_req {
     bool32 notify_repair; // If true, peer will be set need repair
     uint32 reserved_field;
     knl_scn_t reset_log_scn;
-    uint64 reserved[6];
+    uint32 src_dbid;      // source database id (redo stream identity)
+    uint32 src_node_id;   // source node id (redo stream identity)
+    uint64 reserved[4];
 } rep_query_status_req_t;
 
 typedef struct st_rep_query_status_resp {
@@ -141,6 +146,19 @@ typedef struct st_rep_hb_resp {
     knl_scn_t current_scn;
     log_point_t contflush_point;
 } rep_hb_resp_t;
+
+/*
+ * Drain certificate carried in REP_HEART_BEAT_REQ (version >= ST_VERSION_2):
+ * curr_lsn is the source node's Lamport clock at certificate construction time,
+ * drained means all redo with lsn <= curr_lsn has been flushed and sent to the
+ * standby. The standby uses this per-stream frontier to preserve replay order
+ * across source nodes.
+ */
+typedef struct st_rep_hb_req {
+    uint64 curr_lsn;
+    uint32 drained;
+    uint32 reserved;
+} rep_hb_req_t;
 
 typedef struct st_rep_switch_resp {
     rep_state_t state;
@@ -202,4 +220,3 @@ status_t knl_try_update_repl_cipher(knl_session_t *session, const char *plain);
 #endif
 
 #endif
-

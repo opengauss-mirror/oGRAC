@@ -161,7 +161,7 @@ static bool32 lsnd_connecting_primary(knl_session_t *session, const char *host, 
     char pri_host[OG_HOST_NAME_BUFFER_SIZE];
     uint16 pri_port;
 
-    if (DB_IS_PRIMARY(db) || session->kernel->lrcv_ctx.pipe == NULL) {
+    if (DB_IS_PRIMARY(db) || session->kernel->lrcv_mgr.streams[0].pipe == NULL) {
         return OG_FALSE;
     }
 
@@ -690,7 +690,7 @@ static status_t lsnd_process_message_once(lsnd_t *lsnd)
 
 static inline bool32 lsnd_need_notify_repair(lsnd_t *lsnd)
 {
-    lrcv_context_t *lrcv = &lsnd->session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &lsnd->session->kernel->lrcv_mgr.streams[0];
     database_t *db = &lsnd->session->kernel->db;
 
     if (DB_IS_PRIMARY(db) ||
@@ -724,6 +724,8 @@ static status_t lsnd_put_batch_message(lsnd_t *lsnd, log_point_t *point, uint32 
     rep_batch_req->log_file_id = file_id;
     rep_batch_req->curr_point = redo_ctx->curr_point;
     rep_batch_req->compress_alg = lsnd->dest_info.compress_alg;
+    rep_batch_req->src_dbid = lsnd->session->kernel->db.ctrl.core.dbid;
+    rep_batch_req->src_node_id = lsnd->session->kernel->id;
 
     batch = (log_batch_t *)lsnd->send_buf.read_buf.aligned_buf;
     if (log_need_realloc_buf(batch, &lsnd->send_buf.read_buf, "lsnd batch buffer", OG_MAX_BATCH_SIZE + SIZE_K(4))) {
@@ -923,7 +925,7 @@ static status_t lsnd_read_arch_logfile(lsnd_t *lsnd)
 static bool32 lsnd_read_log_precheck(lsnd_t *lsnd, log_point_t *target_point)
 {
     log_point_t *send_point = &lsnd->send_point;
-    log_point_t flush_point = lsnd->session->kernel->lrcv_ctx.flush_point;
+    log_point_t flush_point = lsnd->session->kernel->lrcv_mgr.streams[0].flush_point;
     database_t *db = &lsnd->session->kernel->db;
 
     /*
@@ -964,7 +966,7 @@ static bool32 lsnd_read_log_precheck(lsnd_t *lsnd, log_point_t *target_point)
 static bool32 lsnd_need_reconnect_cs(lsnd_t *lsnd)
 {
     knl_instance_t *knl = lsnd->session->kernel;
-    lrcv_context_t *lrcv = &knl->lrcv_ctx;
+    lrcv_context_t *lrcv = &knl->lrcv_mgr.streams[0];
     database_t *db = &knl->db;
 
     if (!DB_IS_PHYSICAL_STANDBY(db) || !lsnd->host_changed_reconnect || lrcv->status != LRCV_READY) {
@@ -995,7 +997,7 @@ static inline bool32 lsnd_read_log_should_suspend(knl_session_t *session, uint32
         return OG_FALSE;
     }
 
-    if (session->kernel->lrcv_ctx.status < LRCV_READY) {
+    if (session->kernel->lrcv_mgr.streams[0].status < LRCV_READY) {
         return OG_TRUE;
     }
 
@@ -1458,11 +1460,16 @@ static status_t lsnd_query_standby_status(lsnd_t *lsnd)
                                         log_ctx->files[log_ctx->curr_file].ctrl->block_size);
     req->is_standby = DB_IS_PHYSICAL_STANDBY(&lsnd->session->kernel->db);
     req->repl_port = lsnd->session->kernel->attr.repl_port;
-    req->version = ST_VERSION_1;
+    bool32 cluster_repl = DB_ATTR_CLUSTER(lsnd->session);
+    req->version = cluster_repl ?
+        ST_VERSION_2 : ST_VERSION_1;
     req->dbid = lsnd->session->kernel->db.ctrl.core.dbid;
     req->notify_repair = lsnd->notify_repair;
     req->reserved_field = 0;
     req->reset_log_scn = lsnd->session->kernel->db.ctrl.core.reset_log_scn;
+    /* These fields occupy the first legacy reserved word. Keep it zero for V1. */
+    req->src_dbid = cluster_repl ? lsnd->session->kernel->db.ctrl.core.dbid : 0;
+    req->src_node_id = cluster_repl ? lsnd->session->kernel->id : 0;
     errno_t err = memset_s(req->reserved, sizeof(req->reserved), 0, sizeof(req->reserved));
     knl_securec_check(err);
 
@@ -1502,12 +1509,38 @@ static status_t lsnd_send_heart_beat(lsnd_t *lsnd)
         return OG_SUCCESS;
     }
 
-    rep_msg_header.size = sizeof(rep_msg_header_t);
+    /*
+     * Drain certificate (redo replay ordering barrier): take the Lamport
+     * clock FIRST, then verify drainage.  drained means all redo with
+     * lsn <= curr_lsn has been flushed to the log file and sent to the
+     * standby, so the standby can safely push its per-stream LSN frontier.
+     */
+    knl_instance_t *knl = lsnd->session->kernel;
+    if (!DB_IS_CLUSTER(lsnd->session)) {
+        /* Preserve the original heartbeat outside dual-cluster replication. */
+        rep_msg_header.size = sizeof(rep_msg_header_t);
+        rep_msg_header.type = REP_HEART_BEAT_REQ;
+        lsnd->last_send_time = now;
+        return cs_write_stream(&lsnd->pipe, (char *)&rep_msg_header, rep_msg_header.size,
+            (int32)cm_atomic_get(&knl->attr.repl_pkg_size));
+    }
+    rep_msg_header.size = sizeof(rep_msg_header_t) + sizeof(rep_hb_req_t);
     rep_msg_header.type = REP_HEART_BEAT_REQ;
     lsnd->last_send_time = now;
 
-    status_t status = cs_write_stream(&lsnd->pipe, (char *)&rep_msg_header, rep_msg_header.size,
+    rep_hb_req_t rep_hb_req;
+    rep_hb_req.curr_lsn = DB_CURR_LSN(lsnd->session);
+    rep_hb_req.reserved = 0;
+    rep_hb_req.drained = (knl->redo_ctx.curr_point.lsn >= rep_hb_req.curr_lsn &&
+                          lsnd->send_point.lfn >= knl->redo_ctx.curr_point.lfn) ? OG_TRUE : OG_FALSE;
+
+    /* send the 8-byte header, then the 16-byte drain-certificate payload */
+    status_t status = cs_write_stream(&lsnd->pipe, (char *)&rep_msg_header, sizeof(rep_msg_header_t),
         (int32)cm_atomic_get(&lsnd->session->kernel->attr.repl_pkg_size));
+    if (status == OG_SUCCESS) {
+        status = cs_write_stream(&lsnd->pipe, (char *)&rep_hb_req, sizeof(rep_hb_req_t),
+            (int32)cm_atomic_get(&lsnd->session->kernel->attr.repl_pkg_size));
+    }
     if (status != OG_SUCCESS) {
         OG_LOG_RUN_ERR("[Log Sender] failed to send heart beat message to standby");
     }
@@ -1961,7 +1994,7 @@ status_t lsnd_init(knl_session_t *session)
         uint32 begin_time = attr->timer->systime;
         uint32 timeout = attr->repl_wait_timeout * REPL_WAIT_MULTI;
 
-        while (session->kernel->lrcv_ctx.session == NULL) {
+        while (session->kernel->lrcv_mgr.streams[0].session == NULL) {
             if (attr->timer->systime - begin_time >= timeout) {
                 OG_LOG_RUN_WAR("primary has not connected here in %us, promote failed probably", timeout);
                 break;

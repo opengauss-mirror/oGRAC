@@ -401,6 +401,8 @@ config_item_t g_parameters[] = {
       EFFECT_REBOOT, CFG_INS, sql_verify_als_ip, NULL, NULL, NULL },
     { "REPL_PORT", OG_TRUE, ATTR_NONE, "0", NULL, NULL, "-", "0,[1024,65535]", "OG_TYPE_INTEGER", NULL, PARAM_REPL_PORT,
       EFFECT_REBOOT, CFG_INS, sql_verify_als_repl_port, NULL, NULL, NULL },
+    { "PRIMARY_REPL_ADDR", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL,
+      PARAM_PRIMARY_REPL_ADDR, EFFECT_REBOOT, CFG_INS, sql_verify_als_primary_repl_addr, NULL, NULL, NULL },
     { "REPL_TRUST_HOST", OG_TRUE, ATTR_NONE, "", NULL, NULL, "-", "-", "OG_TYPE_VARCHAR", NULL, PARAM_REPL_TRUST_HOST,
       EFFECT_IMMEDIATELY, CFG_INS, sql_verify_als_ip, sql_notify_als_repl_host, NULL, NULL },
     { "REPL_AUTH", OG_TRUE, ATTR_NONE, "FALSE", NULL, NULL, "-", "FALSE,TRUE", "OG_TYPE_BOOLEAN", NULL, PARAM_REPL_AUTH,

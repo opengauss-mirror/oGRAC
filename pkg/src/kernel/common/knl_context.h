@@ -141,6 +141,8 @@ typedef struct st_knl_attr {
     uint32 repl_wait_timeout;
     uint32 build_keep_alive_timeout;
     uint16 repl_port;
+    // primary cluster master repl addr(host:port)
+    char primary_repl_addr[OG_HOST_NAME_BUFFER_SIZE + OG_TCP_PORT_MAX_LENGTH + 1];
     char repl_trust_host[OG_HOST_NAME_BUFFER_SIZE * OG_MAX_LSNR_HOST_COUNT];
     bool32 repl_auth; // default false, if true, check user and passwd in replication
     bool32 repl_scram_auth; // default false, if true, force user and passwd using complete rfc5802
@@ -395,7 +397,7 @@ typedef struct st_knl_instance {
     lrpl_context_t lrpl_ctx;
     rbp_aly_ctx_t rbp_aly_ctx;
     lftc_clt_ctx_t lftc_client_ctx;
-    lrcv_context_t lrcv_ctx;
+    lrcv_mgr_t lrcv_mgr;
     rcy_context_t rcy_ctx;
     buf_context_t buf_ctx;
     pcrp_context_t pcrp_ctx;

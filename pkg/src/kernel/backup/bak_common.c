@@ -1203,8 +1203,19 @@ status_t bak_set_build_running(knl_session_t *session, bak_context_t *ogx, build
 
     if (build_progress->start_time == 0) {
         if (!BAK_NOT_WORK(ogx)) {
-            OG_THROW_ERROR(ERR_BACKUP_IN_PROGRESS, "backup");
-            return OG_ERROR;
+            if (DB_IS_CLUSTER(session) && ogx->bak_condition == KEEP_ALIVE) {
+                // the standby restarted a full build from scratch (start_time == 0);
+                // override the stale break-point context left by the previously
+                // failed build instead of waiting for the keep-alive timeout
+                OG_LOG_RUN_INF("[BUILD] fresh build overrides stale break-point context");
+                dls_spin_lock(session, &ogx->lock, NULL);
+                ogx->bak.need_retry = OG_FALSE;
+                ogx->bak_condition = NOT_RUNNING;
+                dls_spin_unlock(session, &ogx->lock);
+            } else {
+                OG_THROW_ERROR(ERR_BACKUP_IN_PROGRESS, "backup");
+                return OG_ERROR;
+            }
         }
         if (dls_spin_try_lock(session, &ogx->lock) == OG_FALSE) {
             return OG_ERROR;
@@ -1827,7 +1838,11 @@ void bak_reset_process(bak_process_t *ogx)
     cm_aligned_free(&ogx->table_compress_ctx.zip_buf);
     cm_aligned_free(&ogx->backup_rw_buf.aligned_buf);
 
-    g_knl_callback.release_knl_session((knl_handle_t *)ogx->session);
+    /* BUILD may fail before bak_reset_stats_and_alloc_sess allocates a session. */
+    if (ogx->session != NULL) {
+        g_knl_callback.release_knl_session((knl_handle_t *)ogx->session);
+        ogx->session = NULL;
+    }
 
     ogx->read_size = 0;
     ogx->write_size = 0;

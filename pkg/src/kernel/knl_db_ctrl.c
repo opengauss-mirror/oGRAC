@@ -366,6 +366,17 @@ status_t db_load_ctrlspace(knl_session_t *session, text_t *files)
 
     bool is_slave = !DB_IS_PRIMARY(db);
     db_load_core(db);
+    /*
+     * N-to-M physical standby: decide the role from the control file content
+     * just loaded, not from whatever db->ctrl.core held before (a zeroed
+     * role == PRIMARY).  Otherwise opening a standby that was cleanly shut
+     * down would always spawn the auto-promote thread and flip the cluster to
+     * PRIMARY as soon as the LRPL drains, instead of staying a read-only
+     * physical standby that keeps applying redo streams.
+     */
+    if (DB_ATTR_CLUSTER(session) && db->ctrl.core.clustered) {
+        is_slave = !DB_IS_PRIMARY(db);
+    }
     if (is_slave) {
         OG_LOG_RUN_INF("Manually set to STANDBY.");
         db->ctrl.core.db_role = REPL_ROLE_PHYSICAL_STANDBY;

@@ -220,7 +220,7 @@ static status_t lrpl_load(knl_session_t *session, log_point_t *point, uint32 *da
     rcy_context_t *rcy = &session->kernel->rcy_ctx;
     lrpl_context_t *ogx = &session->kernel->lrpl_ctx;
     log_context_t *log = &session->kernel->redo_ctx;
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
     uint32 file_id = OG_INVALID_ID32;
     rcy->loading_curr_file = OG_FALSE;
 
@@ -373,7 +373,7 @@ static status_t lrpl_perform(knl_session_t *session, log_point_t *point)
 bool32 lrpl_need_replay(knl_session_t *session, log_point_t *point)
 {
     log_context_t *redo_ctx = &session->kernel->redo_ctx;
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
     log_file_t *file = &redo_ctx->files[redo_ctx->curr_file];
     log_point_t *flush_point = &lrcv->flush_point;
     log_point_t *primary_point = &lrcv->primary_curr_point;
@@ -520,7 +520,7 @@ static void lrpl_try_repair_file_offset(knl_session_t *session)
     uint64 lfn = 0;
     uint64 scn;
 
-    if (session->kernel->lrcv_ctx.reconnected || DB_IS_RAFT_ENABLED(session->kernel)) {
+    if (session->kernel->lrcv_mgr.streams[0].reconnected || DB_IS_RAFT_ENABLED(session->kernel)) {
         return;
     }
 
@@ -547,13 +547,13 @@ static void lrpl_try_repair_file_offset(knl_session_t *session)
      * Set reconnected to true, to prevent parsing current redo file
      * and increasing free size repeatably.
      */
-    session->kernel->lrcv_ctx.reconnected = OG_TRUE;
+    session->kernel->lrcv_mgr.streams[0].reconnected = OG_TRUE;
 }
 
 static inline bool32 lrpl_can_failover(knl_session_t *session)
 {
     lrpl_context_t *lrpl = &session->kernel->lrpl_ctx;
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
     
     return (bool32)(lrcv->status == LRCV_NEED_REPAIR || lrpl->has_gap ||
             !lrpl_need_replay(session, &lrpl->curr_point) ||
@@ -814,7 +814,7 @@ bool32 lrpl_replay_blocked(knl_session_t *session)
 {
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
     lrpl_context_t *lrpl = &kernel->lrpl_ctx;
-    lrcv_context_t *lrcv = &kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &kernel->lrcv_mgr.streams[0];
 
     if (DB_STATUS(session) != DB_STATUS_OPEN || lrcv->status < LRCV_READY) {
         return OG_FALSE;

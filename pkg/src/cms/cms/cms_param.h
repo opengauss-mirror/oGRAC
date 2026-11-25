@@ -66,7 +66,7 @@ typedef struct st_cms_params {
     uint32          cms_mes_pipe_type;
     uint16          node_id;
     bool8           cms_mes_crc_check_switch;
-    int8            unused;
+    bool8           cms_skip_vote_reconnect; // explicit opt-in for dual-cluster deployments
     char            xalarm_node_map[CMS_PATH_BUFFER_SIZE * 4];
 }cms_param_t;
 

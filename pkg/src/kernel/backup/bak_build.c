@@ -30,6 +30,7 @@
 #include "bak_restore.h"
 #include "knl_context.h"
 #include "dtc_database.h"
+#include "rc_reform.h"
 
 static void bak_set_build_params(bak_t *bak, cs_pipe_t *pipe, cs_packet_t *send_pack, cs_packet_t *recv_pack,
                                  build_param_ctrl_t *ctrl)
@@ -72,13 +73,13 @@ static void bak_set_build_params(bak_t *bak, cs_pipe_t *pipe, cs_packet_t *send_
 
 bool32 knl_brain_repair_check(knl_session_t *session)
 {
-    reset_log_t *reset_log = &session->kernel->lrcv_ctx.primary_resetlog;
+    reset_log_t *reset_log = &session->kernel->lrcv_mgr.streams[0].primary_resetlog;
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
     log_point_t *rcy = &dtc_my_ctrl(session)->rcy_point;
 
-    if ((kernel->lrcv_ctx.dbid != 0) && (kernel->lrcv_ctx.dbid != kernel->db.ctrl.core.dbid)) {
+    if ((kernel->lrcv_mgr.streams[0].dbid != 0) && (kernel->lrcv_mgr.streams[0].dbid != kernel->db.ctrl.core.dbid)) {
         OG_LOG_RUN_ERR("[REPAIR] primary dbid [%u] is not equal to standby dbid [%u], need repair",
-            kernel->lrcv_ctx.dbid, kernel->db.ctrl.core.dbid);
+            kernel->lrcv_mgr.streams[0].dbid, kernel->db.ctrl.core.dbid);
         OG_THROW_ERROR(ERR_INVALID_OPERATION, ", primary dbid is not equal to standby dbid.");
         return OG_FALSE;
     }
@@ -318,14 +319,14 @@ static status_t build_find_batch(knl_session_t *session, device_type_t type, int
             last_lfn = batch->head.point.lfn;
             if (batch->head.point.lfn == point->lfn) {
                 finished = OG_TRUE;
-                if (session->kernel->lrcv_ctx.primary_reset_log_scn == batch->scn ||
-                    session->kernel->lrcv_ctx.primary_reset_log_scn == 0) {
+                if (session->kernel->lrcv_mgr.streams[0].primary_reset_log_scn == batch->scn ||
+                    session->kernel->lrcv_mgr.streams[0].primary_reset_log_scn == 0) {
                     *data_size = batch->size;
                 } else {
                     *data_size = 0;
                     OG_LOG_RUN_ERR("[BUILD] For same lfn [%llu] in resetlog, scn from primary and standby [%llu/%llu] "
                                    "is different, break-brain build is not allowed", (uint64)point->lfn,
-                                   session->kernel->lrcv_ctx.primary_reset_log_scn, batch->scn);
+                                   session->kernel->lrcv_mgr.streams[0].primary_reset_log_scn, batch->scn);
                 }
                 break;
             }
@@ -445,6 +446,9 @@ static status_t bak_build_prepare(knl_session_t *session)
     offset += BACKUP_BUFFER_SIZE(bak);
 
     bak_reset_process_ctrl(bak, OG_TRUE);
+    // build on a standby must be self-contained: allocate the backup process sessions
+    // (write threads use them), a fresh standby may never have run backup/restore before
+    bak_reset_stats_and_alloc_sess(session);
     bak->compress_buf = buf + offset;
     offset += BACKUP_BUFFER_SIZE(bak);
     /*
@@ -541,6 +545,14 @@ void bak_build_end(knl_session_t *session)
         OG_LOG_RUN_INF("[BUILD] build failed, error code :%d, %s", error_info->err_code, error_info->err_msg);
     }
 
+    // release the arch rw buffer allocated for the standby build (see bak_build_start);
+    // a subsequent build retry re-allocates it
+    arch_context_t *arch_ctx = &session->kernel->arch_ctx;
+    arch_proc_context_t *proc_ctx = &arch_ctx->arch_proc[ARCH_DEFAULT_DEST - 1];
+    if (proc_ctx->arch_rw_buf.aligned_buf.aligned_buf != NULL) {
+        arch_release_proc_resource(proc_ctx);
+    }
+
     build_disconnect(bak);
 
     bak->failed = OG_FALSE;
@@ -565,13 +577,32 @@ static status_t bak_build_connect(knl_session_t *session)
     char bind_host[OG_HOST_NAME_BUFFER_SIZE];
     int32 ret;
 
-    if (lrcv_get_primary_server(session, OG_BACKUP_RETRY_COUNT, server_host, OG_HOST_NAME_BUFFER_SIZE,
-        &port) != OG_SUCCESS) {
-        return OG_ERROR;
-    }
+    if (DB_ATTR_CLUSTER(session) && session->kernel->attr.primary_repl_addr[0] != '\0') {
+        // cluster standby build is decoupled from redo transport, connect to the primary
+        // cluster reform master's repl listener directly via PRIMARY_REPL_ADDR
+        text_t addr_text;
+        text_t host_part;
+        text_t port_part;
+        cm_str2text(session->kernel->attr.primary_repl_addr, &addr_text);
+        if (!cm_split_rtext(&addr_text, ':', '\0', &host_part, &port_part) || host_part.len == 0 ||
+            port_part.len == 0) {
+            OG_THROW_ERROR(ERR_INVALID_PARAMETER, "PRIMARY_REPL_ADDR");
+            return OG_ERROR;
+        }
+        OG_RETURN_IFERR(cm_text2str(&host_part, server_host, OG_HOST_NAME_BUFFER_SIZE));
+        ret = strncpy_s(url, sizeof(url), session->kernel->attr.primary_repl_addr,
+            strlen(session->kernel->attr.primary_repl_addr));
+        knl_securec_check(ret);
+    } else {
+        // non-cluster scenario keeps the learned primary info path (lsnd connected first)
+        if (lrcv_get_primary_server(session, OG_BACKUP_RETRY_COUNT, server_host, OG_HOST_NAME_BUFFER_SIZE,
+            &port) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
 
-    ret = snprintf_s(url, sizeof(url), sizeof(url) - 1, "%s:%u", server_host, (uint32)port);
-    knl_securec_check_ss(ret);
+        ret = snprintf_s(url, sizeof(url), sizeof(url) - 1, "%s:%u", server_host, (uint32)port);
+        knl_securec_check_ss(ret);
+    }
     OG_LOG_RUN_INF("[BUILD] remote backup, standby connect to primary %s", url);
 
     remote->pipe->connect_timeout = REPL_CONNECT_TIMEOUT;
@@ -597,6 +628,19 @@ static status_t bak_build_start(knl_session_t *session)
 
     if (arch_init(session) != OG_SUCCESS) {
         return OG_ERROR;
+    }
+
+    // the standby build restore path records archive info while restoring arch
+    // files in parallel (arch_save_archinfo flushes the arch file head through
+    // the arch rw buffer); arch_start normally allocates this buffer but it is
+    // primary-only, so allocate it here for the standby build
+    arch_context_t *arch_ctx = &session->kernel->arch_ctx;
+    arch_proc_context_t *proc_ctx = &arch_ctx->arch_proc[ARCH_DEFAULT_DEST - 1];
+    if (proc_ctx->arch_rw_buf.aligned_buf.aligned_buf == NULL) {
+        proc_ctx->data_type = arch_ctx->data_type;
+        if (arch_init_proc_resource(session, proc_ctx) != OG_SUCCESS) {
+            return OG_ERROR;
+        }
     }
 
     if (bak_alloc_compress_context(session, OG_FALSE) != OG_SUCCESS) {
@@ -680,6 +724,9 @@ static status_t rst_read_start_msg(knl_session_t *session, bak_start_msg_t *star
         bak->need_check = OG_FALSE;
         bak->files[bak->file_count].type = rst_calc_file_type(start_msg->type);
         bak->files[bak->file_count].id = start_msg->file_id;
+        if (bak->files[bak->file_count].type == BACKUP_CTRL_FILE) {
+            bak->files[bak->file_count].size = (uint64)CTRL_MAX_PAGES(session) * OG_DFLT_CTRL_BLOCK_SIZE;
+        }
         bak->curr_file_index = bak->file_count;
         bak->file_count++;
     }
@@ -743,6 +790,11 @@ static status_t rst_build_receive_files(knl_session_t *session)
             }
         } else {
             if (rst_read_file(session, bak->curr_file_index) != OG_SUCCESS) {
+                return OG_ERROR;
+            }
+            // the raw file read path only consumes the body, the terminating FILE_END
+            // packet is consumed here (the stream path consumes it internally)
+            if (rst_wait_agent_process(bak) != OG_SUCCESS) {
                 return OG_ERROR;
             }
         }
@@ -952,7 +1004,7 @@ static status_t build_analyze_redo(knl_session_t *session, log_point_t *curr_poi
 
 static status_t build_repair_prepare(knl_session_t *session, uint64 *base_lsn)
 {
-    reset_log_t resetlog = session->kernel->lrcv_ctx.primary_resetlog;
+    reset_log_t resetlog = session->kernel->lrcv_mgr.streams[0].primary_resetlog;
     aligned_buf_t log_buf = session->kernel->backup_ctx.bak.log_buf;
     log_point_t target_point;
     uint32 data_size = 0;
@@ -1716,7 +1768,7 @@ static status_t bak_build_prepare_attr(knl_session_t *session, build_param_ctrl_
 status_t bak_build_restore(knl_session_t *session, build_param_ctrl_t *ctrl)
 {
     bak_context_t *ogx = &session->kernel->backup_ctx;
-    lrcv_context_t *lrcv_ctx = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv_ctx = &session->kernel->lrcv_mgr.streams[0];
     bak_t *bak = &ogx->bak;
 
     OG_LOG_RUN_INF("[BUILD] build start, compress method %s, compress level %u, is increment %u, is repair %u, "
@@ -1925,6 +1977,16 @@ status_t bak_build_backup(knl_session_t *session, cs_pipe_t *pipe, cs_packet_t *
         return OG_ERROR;
     }
 
+    if (DB_ATTR_CLUSTER(session) && !rc_is_master()) {
+        // build service is master-only in cluster mode, consistent with log shipping
+        // topology (standby lrcv accepts only one primary connection)
+        OG_THROW_ERROR(ERR_INVALID_OPERATION, ", build must be served by reform master");
+        bak_send_error(bak, pipe, (int32)cm_atomic_get(&session->kernel->attr.repl_pkg_size));
+        return OG_ERROR;
+    }
+    OG_LOG_RUN_INF("[BUILD] build service on master node, clustered:%u, node_count:%u, db_role:%u",
+        DB_ATTR_CLUSTER(session), session->kernel->db.ctrl.core.node_count, session->kernel->db.ctrl.core.db_role);
+
     if (bak_precheck(session) != OG_SUCCESS) {
         bak_send_error(bak, pipe, (int32)cm_atomic_get(&session->kernel->attr.repl_pkg_size));
         return OG_ERROR;
@@ -1971,6 +2033,10 @@ status_t bak_build_backup(knl_session_t *session, cs_pipe_t *pipe, cs_packet_t *
     if (status != OG_SUCCESS) {
         bak_send_error(bak, pipe, (int32)cm_atomic_get(&session->kernel->attr.repl_pkg_size));
     }
+
+    // reset the build-running state: on success go back to NOT_RUNNING, on a
+    // first-link failure keep the break-point context alive for standby resume
+    bak_unset_build_running(session, ogx);
 
     return status;
 }

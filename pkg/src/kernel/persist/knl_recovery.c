@@ -1022,7 +1022,7 @@ static inline void rcy_next_file(knl_session_t *session, log_point_t *point, boo
     log_context_t *ogx = &session->kernel->redo_ctx;
     reset_log_t *reset_log = &session->kernel->db.ctrl.core.resetlogs;
     database_t *db = &session->kernel->db;
-    lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
 
     if (!lrcv->wait_info.waiting && LOG_POINT_FILE_EQUAL(*point, ogx->files[ogx->curr_file].head)) {
         *need_more_log = (db->status != DB_STATUS_RECOVERY) && db->status != DB_STATUS_REDO_ANALYSIS;

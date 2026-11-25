@@ -1085,9 +1085,14 @@ static status_t bak_read_file_block(knl_session_t *session, bak_process_t *proc,
         }
         proc->write_size = read_size;
     } else {
+        // stream backup path does not double-buffer through bak_get_read_buf, so the
+        // read_buf slot used by bak_read_datafile_pages must be pinned to the proc's
+        // read buffer (buf_data[0].data_addr is proc->backup_buf.aligned_buf)
+        proc->read_buf = &proc->backup_rw_buf.buf_data[0];
         if (bak_read_datafile_pages(session, proc) != OG_SUCCESS) {
             return OG_ERROR;
         }
+        proc->write_size = proc->read_buf->data_size; /* actual bytes read by bak_read_datafile_pages */
         knl_panic(proc->write_size <= read_size);
     }
     proc->stat.read_time += (g_timer()->now - start);
@@ -1135,7 +1140,11 @@ static status_t bak_read_block_to_stream(knl_session_t *session, bak_process_t *
             // it's the turn to send this block, need copy block to send buffer
             // skip double write area
             if (bak_datafile_contains_dw(session, &proc->assign_ctrl) && block_id == 1) {
-                knl_panic(stream->read_offset + DW_DISTRICT_PAGES * DEFAULT_PAGE_SIZE(session) == offset);
+                // block 0 reads the space head page (offset DEFAULT_PAGE_SIZE, size DEFAULT_PAGE_SIZE),
+                // then all node's double write districts (DW_DISTRICT_BEGIN..DW_DISTRICT_END) plus
+                // borders are skipped, so the expected offset of block 1 is DW_SPC_HWM_START page.
+                knl_panic(stream->read_offset +
+                          (DW_SPC_HWM_START - SPACE_HEAD_END) * DEFAULT_PAGE_SIZE(session) == offset);
             } else {
                 knl_panic(stream->read_offset == offset);
             }

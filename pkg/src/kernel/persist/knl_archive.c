@@ -2825,7 +2825,7 @@ void arch_check_cont_archived_log_file(arch_proc_context_t *proc_ctx)
         return;
     }
 
-    log_point_t *contflush_point = &session->kernel->lrcv_ctx.contflush_point;
+    log_point_t *contflush_point = &session->kernel->lrcv_mgr.streams[0].contflush_point;
     if (LOG_POINT_FILE_LT(*contflush_point, rcy_point)) {
         contflush_point->rst_id = rcy_point.rst_id;
         contflush_point->asn = rcy_point.asn;
@@ -4003,7 +4003,7 @@ char *arch_get_dest_type(knl_session_t *session, uint32 id, arch_attr_t *attr, b
     }
 
     if (attr->enable) {
-        lrcv_context_t *lrcv = &session->kernel->lrcv_ctx;
+        lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
         if (lrcv->status == LRCV_DISCONNECTED || lrcv->status == LRCV_NEED_REPAIR ||
             lrcv_get_primary_server(session, 0, host, OG_HOST_NAME_BUFFER_SIZE, &port) != OG_SUCCESS) {
             return "UNKNOWN";

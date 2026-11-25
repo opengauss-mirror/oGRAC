@@ -63,9 +63,56 @@ static void srv_clear_lrcv_ctx(lrcv_context_t *lrcv)
     lrcv->peer_repl_port = 0;
     lrcv->role_spec_building = OG_FALSE;
     lrcv->is_building = OG_FALSE;
+    lrcv_close_stream_files(lrcv);
+    lrcv->stream_bound = OG_FALSE;
+    lrcv->src_dbid = 0;
+    lrcv->src_node_id = 0;
+    lrcv->file_set = NULL;
+    lrcv->lsn_frontier = 0;
+    lrcv->stream_flushed_lfn = 0;
     lrcv->pipe = NULL;
     lrcv->session = NULL;
     cm_spin_unlock(&lrcv->lock);
+}
+
+static lrcv_context_t *srv_find_lrcv_by_session(knl_instance_t *kernel, knl_session_t *knl_session)
+{
+    lrcv_mgr_t *mgr = &kernel->lrcv_mgr;
+
+    cm_spin_lock(&mgr->lock, NULL);
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        if (mgr->streams[i].session == knl_session) {
+            cm_spin_unlock(&mgr->lock);
+            return &mgr->streams[i];
+        }
+    }
+    cm_spin_unlock(&mgr->lock);
+    return NULL;
+}
+
+static lrcv_context_t *srv_alloc_lrcv_slot(knl_instance_t *kernel, knl_session_t *knl_session)
+{
+    lrcv_mgr_t *mgr = &kernel->lrcv_mgr;
+
+    /*
+     * Claim the slot and publish its session under the same critical section.
+     * Without this, two connections (e.g. both primary nodes' log senders
+     * reconnecting right after a standby restart) could both see the slot as
+     * free before the first one finishes srv_init_lrcv_ctx, end up on the
+     * same receiver context, and run two lrcv_proc threads concurrently on
+     * it.  Their error paths then race: one clears lrcv->pipe while the other
+     * still disconnects, crashing in cs_disconnect(NULL).
+     */
+    cm_spin_lock(&mgr->lock, NULL);
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        if (mgr->streams[i].session == NULL) {
+            mgr->streams[i].session = knl_session;
+            cm_spin_unlock(&mgr->lock);
+            return &mgr->streams[i];
+        }
+    }
+    cm_spin_unlock(&mgr->lock);
+    return NULL;
 }
 
 static void srv_init_lftc_ctx(session_t *session, lftc_srv_ctx_t *ogx)
@@ -106,11 +153,10 @@ static void srv_process_lrcv_host(lrcv_context_t *lrcv, text_t *host_text)
     knl_securec_check(err);
 }
 
-static status_t srv_init_lrcv_ctx(session_t *session, text_t *host_text)
+static status_t srv_init_lrcv_ctx(session_t *session, text_t *host_text, lrcv_context_t *ogx)
 {
     agent_t *agent = session->agent;
     knl_session_t *knl_session = &session->knl_session;
-    lrcv_context_t *ogx = &knl_session->kernel->lrcv_ctx;
     database_t *db = &knl_session->kernel->db;
 
     if (DB_IS_PRIMARY(db)) {
@@ -146,29 +192,50 @@ static status_t srv_init_lrcv_ctx(session_t *session, text_t *host_text)
 static status_t srv_replica_prepare_lrcv(session_t *session, text_t *host_text)
 {
     knl_instance_t *kernel = (knl_instance_t *)session->knl_session.kernel;
-    lrcv_context_t *ogx = &kernel->lrcv_ctx;
+    lrcv_context_t *ogx = NULL;
 
-    if (!cm_spin_try_lock(&ogx->lock)) {
-        OG_THROW_ERROR(ERR_DB_TOO_MANY_PRIMARY, "can not start log receiver thread concurrently");
-        return OG_ERROR;
-    }
-
-    if (ogx->session != NULL) {
-        cm_spin_unlock(&ogx->lock);
-        if (DB_IS_CASCADED_PHYSICAL_STANDBY(&kernel->db) && ogx->status > LRCV_DISCONNECTED) {
-            OG_THROW_ERROR(ERR_CASCADED_STANDBY_CONNECTED);
-        } else {
-            OG_THROW_ERROR(ERR_DB_TOO_MANY_PRIMARY, "another primary database has connected");
+    /* Before MOUNT, cluster_ready is not set yet; use the configured topology. */
+    if (!DB_ATTR_CLUSTER(&session->knl_session)) {
+        ogx = &kernel->lrcv_mgr.streams[0];
+        if (!cm_spin_try_lock(&ogx->lock)) {
+            OG_THROW_ERROR(ERR_DB_TOO_MANY_PRIMARY, "can not start log receiver thread concurrently");
+            return OG_ERROR;
         }
-        return OG_ERROR;
-    }
-
-    if (srv_init_lrcv_ctx(session, host_text) != OG_SUCCESS) {
+        cm_spin_lock(&kernel->lrcv_mgr.lock, NULL);
+        if (ogx->session != NULL) {
+            cm_spin_unlock(&kernel->lrcv_mgr.lock);
+            if (DB_IS_CASCADED_PHYSICAL_STANDBY(&kernel->db) && ogx->status > LRCV_DISCONNECTED) {
+                OG_THROW_ERROR(ERR_CASCADED_STANDBY_CONNECTED);
+            } else {
+                OG_THROW_ERROR(ERR_DB_TOO_MANY_PRIMARY, "another primary database has connected");
+            }
+            cm_spin_unlock(&ogx->lock);
+            return OG_ERROR;
+        }
+        ogx->session = &session->knl_session;
+        cm_spin_unlock(&kernel->lrcv_mgr.lock);
+        status_t status = srv_init_lrcv_ctx(session, host_text, ogx);
         cm_spin_unlock(&ogx->lock);
+        return status;
+    }
+
+    /*
+     * Multi-stream admission: each redo stream (identified by src_node_id,
+     * learned from REP_QUERY_STATUS_REQ) gets its own receiver context, so
+     * multiple primary nodes can connect to the same standby concurrently.
+     * Same-stream dual-primary protection happens in lrcv_bind_stream.
+     * Here we only claim a free context slot for the connecting session.
+     */
+    ogx = srv_alloc_lrcv_slot(kernel, &session->knl_session);
+    if (ogx == NULL) {
+        OG_THROW_ERROR(ERR_DB_TOO_MANY_PRIMARY, "no free log receiver slot for new stream");
         return OG_ERROR;
     }
 
-    cm_spin_unlock(&ogx->lock);
+    if (srv_init_lrcv_ctx(session, host_text, ogx) != OG_SUCCESS) {
+        return OG_ERROR;
+    }
+
     return OG_SUCCESS;
 }
 
@@ -577,12 +644,18 @@ static void srv_replica_proc(agent_t *agent, replica_type_t replica_type)
     lftc_srv_ctx_t *lftc_ctx = NULL;
 
     switch (replica_type) {
-        case REPLICA_LRCV:
-            if (lrcv_proc(&g_instance->kernel.lrcv_ctx) != OG_SUCCESS) {
+        case REPLICA_LRCV: {
+            lrcv_context_t *lrcv = srv_find_lrcv_by_session(&g_instance->kernel, &agent->session->knl_session);
+            if (lrcv == NULL) {
+                OG_LOG_RUN_ERR("Log receiver server error, stream context not found, thread exit");
+                break;
+            }
+            if (lrcv_proc(lrcv) != OG_SUCCESS) {
                 OG_LOG_RUN_ERR("Log receiver server error, thread exit");
             }
-            srv_clear_lrcv_ctx(&g_instance->kernel.lrcv_ctx);
+            srv_clear_lrcv_ctx(lrcv);
             break;
+        }
         case REPLICA_LFTC:
             OG_BREAK_IF_ERROR(lftc_srv_ctx_alloc(&lftc_ctx));
             srv_init_lftc_ctx(agent->session, lftc_ctx);
@@ -607,6 +680,7 @@ static void srv_replica_agent_entry(thread_t *thread)
     replica_type_t replica_type = REPLICA_INVALID;
     agent_t *agent = (agent_t *)thread->argument;
     session_t *session = agent->session;
+    lrcv_context_t *claimed = NULL;
 
     session->knl_session.status = SESSION_ACTIVE;
     session->knl_session.canceled = OG_FALSE;
@@ -618,8 +692,18 @@ static void srv_replica_agent_entry(thread_t *thread)
     cs_init_set(&agent->send_pack, CS_LOCAL_VERSION);
 
     if (srv_replica_process_login(session, &replica_type) != OG_SUCCESS) {
-        if (replica_type == REPLICA_LRCV) {
-            srv_clear_lrcv_ctx(&g_instance->kernel.lrcv_ctx);
+        /*
+         * A redo-stream connection claims its receiver slot (and publishes
+         * lrcv->session) inside srv_replica_prepare_lrcv, BEFORE replica_type
+         * is set to REPLICA_LRCV.  If the peer drops or the handshake fails
+         * at that point, the slot stays claimed and lrcv_close() later waits
+         * on it forever (observed after a cluster switchover: the promoted
+         * primary's lrcv_close hung on a leaked session).  Clear any slot
+         * claimed by this session regardless of how far login got.
+         */
+        claimed = srv_find_lrcv_by_session(&g_instance->kernel, &session->knl_session);
+        if (claimed != NULL) {
+            srv_clear_lrcv_ctx(claimed);
         }
         (void)srv_return_error(session);
         srv_replica_thread_exit(thread, session);
@@ -627,8 +711,9 @@ static void srv_replica_agent_entry(thread_t *thread)
     }
 
     if (srv_return_success(session) != OG_SUCCESS) {
-        if (replica_type == REPLICA_LRCV) {
-            srv_clear_lrcv_ctx(&g_instance->kernel.lrcv_ctx);
+        claimed = srv_find_lrcv_by_session(&g_instance->kernel, &session->knl_session);
+        if (claimed != NULL) {
+            srv_clear_lrcv_ctx(claimed);
         }
         srv_replica_thread_exit(thread, session);
         return;

@@ -31,6 +31,14 @@
 #include "knl_database.h"
 #include "knl_context.h"
 
+/*
+ * CMS also links this module through ogmes and ogrc, without the kernel log sender.
+ * Weak references resolve to the kernel implementation in ogracd and remain unset in CMS.
+ * Role-change callbacks run in ogracd, where the log sender is available.
+ */
+status_t lsnd_init(knl_session_t *session) __attribute__((weak));
+void lsnd_close_all_thread(knl_session_t *session) __attribute__((weak));
+
 reform_ctx_t *g_rc_ctx = NULL;
 static cluster_view_t g_cluster_view = { .is_stable = OG_TRUE };
 reform_callback_t g_rc_callback = { 0 };
@@ -74,7 +82,23 @@ void rc_notify_cluster_change(cms_res_status_list_t *res_list)
 
 status_t rc_change_role(uint8 oper)
 {
-    // 1: upgrade to master; 2:downgrade from master
+    // 1: upgrade to master; 2: downgrade from master
+    if (g_rc_ctx == NULL || g_rc_ctx->session == NULL) {
+        OG_LOG_RUN_WAR("[RC] skip change role, reform context is not ready, oper:%u", oper);
+        return OG_ERROR;
+    }
+
+    /*
+     * N-to-M redo replication: every primary cluster node pushes its own redo
+     * stream to the standby cluster, so log senders are started at database
+     * open and keep running regardless of the reform master role.
+     */
+    if (oper == 1 || oper == 2) {
+        OG_LOG_RUN_INF("[RC] master role change keeps log sender running (N-to-M replication)");
+        return OG_SUCCESS;
+    }
+
+    OG_LOG_RUN_WAR("[RC] unknown master role change oper:%u", oper);
     return OG_SUCCESS;
 }
 
