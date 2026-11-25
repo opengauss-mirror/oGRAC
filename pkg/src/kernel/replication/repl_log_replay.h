@@ -49,6 +49,15 @@ typedef struct st_lrpl_context {
     bool32 is_replaying;
     bool32 is_closing;
     bool32 is_done;
+    /*
+     * Set by the recovery path when a continuous-apply cycle ends while some
+     * source stream still has received-but-unapplied redo (e.g. batches held
+     * back by the cross-node drain barrier).  The LRPL idle-skip logic keeps
+     * starting cycles while this flag is set, so gated redo is replayed as
+     * soon as the slow stream's frontier catches up.  Cleared by the cycle
+     * that observes every stream fully applied.
+     */
+    bool32 pending_gated_redo;
     bool32 has_gap;
     bool32 is_promoting;
     date_t begin_time;
@@ -67,6 +76,15 @@ typedef struct st_lrpl_context {
 void lrpl_proc(thread_t *thread);
 status_t lrpl_init(knl_session_t *session);
 void lrpl_close(knl_session_t *session);
+/*
+ * Re-initialize the local node's redo log file group after a cluster promote
+ * (redo-stream standby -> primary).  The standby's local files were written by
+ * the log receiver with its own asn/lfn numbering, so they must be renumbered
+ * against the promoted node's rcy point before the node can restart as a
+ * primary (log_check_asn would otherwise fail).  Mirrors the single-node
+ * failover reset in lrpl_process_for_failover.
+ */
+void lrpl_reset_logfile_for_promote(knl_session_t *session);
 status_t lrpl_prepare_archfile(knl_session_t *session, log_point_t *point, bool32 *reset);
 bool32 lrpl_need_replay(knl_session_t *session, log_point_t *point);
 bool32 lrpl_replay_blocked(knl_session_t *session);

@@ -120,7 +120,8 @@ typedef struct st_core_ctrl {
     uint8 para_log_mode;   // PARA_LOG_DB_MODE_*
     uint8 para_log_groups; // lane group count the database was created with
 
-    char reserved[1514];                          // reserved bytes for nonclustered database
+    char reserved[1510];                          // reserved bytes for nonclustered database
+    uint32 cluster_epoch;                         // bumped on cluster failover; invalidates old primary streams
     bool32 clustered;                             // is clustered database?
     uint32 node_count;                            // instance nodes
     uint32 max_nodes;                             // max instance nodes number

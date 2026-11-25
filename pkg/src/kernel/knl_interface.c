@@ -520,7 +520,6 @@ void knl_set_replica(knl_handle_t session, uint16 replica_port, bool32 is_start)
 {
     knl_session_t *se = (knl_session_t *)session;
     arch_context_t *arch_ctx = &se->kernel->arch_ctx;
-    lrcv_context_t *lrcv = &se->kernel->lrcv_mgr.streams[0];
     se->kernel->attr.repl_port = replica_port;
 
     if (is_start) {
@@ -541,7 +540,7 @@ void knl_set_replica(knl_handle_t session, uint16 replica_port, bool32 is_start)
         return;
     }
 
-    if (lrcv->session == NULL) {
+    if (!lrcv_has_active_session(se)) {
         return;
     }
 
@@ -603,7 +602,7 @@ void knl_set_repl_timeout(knl_handle_t handle, uint32 val)
     knl_session_t *session = (knl_session_t *)handle;
 
     session->kernel->attr.repl_wait_timeout = val;
-    session->kernel->lrcv_mgr.streams[0].timeout = val;
+    lrcv_set_timeout(session, val);
 
     for (uint32 i = 0; i < OG_MAX_PHYSICAL_STANDBY; i++) {
         if (session->kernel->lsnd_ctx.lsnd[i] != NULL) {
@@ -12123,10 +12122,12 @@ bool32 knl_failover_triggered(knl_handle_t knl_handle)
 {
     knl_instance_t *kernel = (knl_instance_t *)knl_handle;
     switch_ctrl_t *ctrl = &kernel->switch_ctrl;
+    knl_session_t *session = kernel->sessions[SESSION_ID_KERNEL];
 
     if (!DB_IS_RAFT_ENABLED(kernel)) {
         return (ctrl->request == SWITCH_REQ_FAILOVER_PROMOTE ||
-                (ctrl->request == SWITCH_REQ_FORCE_FAILOVER_PROMOTE && kernel->lrcv_mgr.streams[0].session == NULL));
+                (ctrl->request == SWITCH_REQ_FORCE_FAILOVER_PROMOTE &&
+                 (session == NULL || !lrcv_has_active_session(session))));
     } else {
         return (ctrl->request == SWITCH_REQ_RAFT_PROMOTE);
     }

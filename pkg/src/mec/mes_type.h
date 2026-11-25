@@ -210,6 +210,9 @@ typedef enum en_mes_command {
     MES_CMD_SET_INCREMENT_UNBLOCK,
     MES_CMD_SET_INCREMENT_UNBLOCK_ACK,
     MES_CMD_VERIFY_REMASTER_PARAM,
+    MES_CMD_DTC_SWITCH_DEMOTE_REQ,   // primary coordinator -> primary peers: demote now
+    MES_CMD_DTC_SWITCH_DEMOTE_ACK,   // primary peer -> coordinator: demote done
+    MES_CMD_DTC_SWITCH_PROMOTE_NOTIFY, // standby master -> standby followers: start promote
 
     MES_CMD_BROADCAST_REMOTE_BUF_MMAP,
     MES_CMD_MASTER_ACK_ALREADY_IN_GBP,

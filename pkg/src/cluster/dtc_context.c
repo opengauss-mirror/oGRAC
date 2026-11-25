@@ -30,6 +30,7 @@
 #include "dtc_reform.h"
 #include "dtc_smon.h"
 #include "dtc_rbp_rt_aly.h"
+#include "dtc_switchover.h"
 #include "cm_io_record.h"
 #include "tms_monitor.h"
 #include "cs_ub.h"
@@ -393,6 +394,12 @@ static status_t dtc_register_proc(void)
     knl_securec_check(dtc_register_proc_func(MES_CMD_MASTER_ACK_ALREADY_IN_GBP, mes_process_msg_ack, OG_FALSE,
                                              "notify requester get page from gbp"));
 
+    knl_securec_check(dtc_register_proc_func(MES_CMD_DTC_SWITCH_DEMOTE_REQ, dtc_switch_process_demote_req,
+                                             OG_TRUE, "cluster switch demote req"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_DTC_SWITCH_DEMOTE_ACK, dtc_switch_process_demote_ack,
+                                             OG_TRUE, "cluster switch demote ack"));
+    knl_securec_check(dtc_register_proc_func(MES_CMD_DTC_SWITCH_PROMOTE_NOTIFY, dtc_switch_process_promote_notify,
+                                             OG_TRUE, "cluster switch promote notify"));
     for (uint32 i = 0; i < MES_CMD_CEIL; i++) {
         mes_set_msg_enqueue(i, g_processors[i].is_enqueue);
     }
@@ -560,6 +567,7 @@ status_t dtc_startup(void)
         kernel->attr.enable_scn_ubsmem = OG_FALSE;
         kernel->attr.enable_remote_distribute_lock = OG_FALSE;
     }
+    dtc_switch_init();
 
     if (drc_init() != OG_SUCCESS) {
         OG_LOG_RUN_ERR("drc_init failed.");

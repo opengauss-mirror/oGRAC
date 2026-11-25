@@ -1055,7 +1055,8 @@ status_t spc_mount_space(knl_session_t *session, space_t *space, bool32 auto_off
             int64 actual_size = cm_device_size(df->ctrl->type, session->datafiles[file_id]);
             knl_panic(actual_size != -1);
             knl_instance_t *kernel = (knl_instance_t *)session->kernel;
-            if (actual_size > df->ctrl->size && !kernel->lrcv_mgr.streams[0].is_building && !kernel->db.recover_for_restore) {
+            if (actual_size > df->ctrl->size && !kernel->backup_ctx.bak.is_building &&
+                !kernel->db.recover_for_restore) {
                 cm_spin_lock(&session->kernel->db.ctrl_lock, NULL);
                 df->ctrl->size = actual_size;
                 // if the actual_size is not formatted to extent_size, it will be fixed at next auto_extend
@@ -1067,7 +1068,8 @@ status_t spc_mount_space(knl_session_t *session, space_t *space, bool32 auto_off
                 OG_LOG_RUN_INF("abnormal power failure occurred during the last resize operation on %s ",
                     df->ctrl->name);
             }
-            if (actual_size < df->ctrl->size && !kernel->lrcv_mgr.streams[0].is_building && !kernel->db.recover_for_restore) {
+            if (actual_size < df->ctrl->size && !kernel->backup_ctx.bak.is_building &&
+                !kernel->db.recover_for_restore) {
                 int64 extend_size = df->ctrl->size - actual_size;
                 cm_spin_lock(&session->kernel->db.ctrl_lock, NULL);
                 df->ctrl->size = actual_size;

@@ -17,6 +17,7 @@
 #include "knl_context.h"
 #include "dtc_database.h"
 #include "dtc_dls.h"
+#include "repl_log_recv.h"
 
 #define REPLAY_FAIL_THRESHOLD  100
 #define LOAD_FAIL_THRESHOLD    10
@@ -207,7 +208,11 @@ static status_t lrpl_load(knl_session_t *session, log_point_t *point, uint32 *da
     rcy_context_t *rcy = &session->kernel->rcy_ctx;
     lrpl_context_t *ogx = &session->kernel->lrpl_ctx;
     log_context_t *log = &session->kernel->redo_ctx;
-    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
+    if (lrcv == NULL) {
+        OG_LOG_RUN_WAR("[Log Replayer] local redo stream is not connected");
+        return OG_ERROR;
+    }
     uint32 file_id = OG_INVALID_ID32;
     rcy->loading_curr_file = OG_FALSE;
 
@@ -360,7 +365,10 @@ static status_t lrpl_perform(knl_session_t *session, log_point_t *point)
 bool32 lrpl_need_replay(knl_session_t *session, log_point_t *point)
 {
     log_context_t *redo_ctx = &session->kernel->redo_ctx;
-    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
+    if (lrcv == NULL) {
+        return OG_FALSE;
+    }
     log_file_t *file = &redo_ctx->files[redo_ctx->curr_file];
     log_point_t *flush_point = &lrcv->flush_point;
     log_point_t *primary_point = &lrcv->primary_curr_point;
@@ -452,6 +460,70 @@ static void lrpl_reset_loginfo(knl_session_t *session, uint32 replay_asn)
     log_unlock_logfile(session);
 }
 
+void lrpl_reset_logfile_for_promote(knl_session_t *session)
+{
+    log_context_t *redo_ctx = &session->kernel->redo_ctx;
+    log_point_t rcy_point = dtc_my_ctrl(session)->rcy_point;
+    log_file_t *file = NULL;
+    uint16 new_curr_file;
+    errno_t ret;
+
+    OG_LOG_RUN_INF("[Log Replayer] reset log file group for cluster promote, rcy [%u-%u/%llu]",
+        rcy_point.rst_id, rcy_point.asn, (uint64)rcy_point.lfn);
+
+    /*
+     * The standby's file heads use the receiver's own asn sequence while the
+     * node ctrl rcy/lrp asn follows the source numbering, so they must be
+     * reconciled when the node becomes primary:
+     *  1. reset the archiver tracking and discard files ahead of the replay
+     *     point (their redo was never applied);
+     *  2. renumber the file holding the redo tail to rcy.asn (it is the
+     *     boundary the new primary's log sender must read from);
+     *  3. rotate to a fresh current file with asn = rcy.asn + 1 so
+     *     log_check_asn (current asn == rcy.asn + 1) passes on restart and
+     *     the node's own redo starts in an empty file.
+     */
+    arch_reset_archfile(session, rcy_point.asn);
+    lrpl_reset_loginfo(session, rcy_point.asn);
+
+    file = &redo_ctx->files[redo_ctx->curr_file];
+    file->head.rst_id = rcy_point.rst_id;
+    file->head.asn = rcy_point.asn;
+    file->ctrl->status = LOG_FILE_INACTIVE;
+    file->ctrl->archived = OG_FALSE;
+    log_flush_head(session, file);
+    if (db_save_log_ctrl(session, redo_ctx->curr_file, session->kernel->id) != OG_SUCCESS) {
+        CM_ABORT(0, "[Log Replayer] ABORT INFO: save control space file failed when reset log file for promote");
+    }
+
+    new_curr_file = (uint16)((redo_ctx->curr_file + 1) % redo_ctx->logfile_hwm);
+    file = &redo_ctx->files[new_curr_file];
+    ret = memset_sp(&file->head, sizeof(file->head), 0, sizeof(file->head));
+    knl_securec_check(ret);
+    file->head.rst_id = rcy_point.rst_id;
+    file->head.asn = rcy_point.asn + 1;
+    file->head.block_size = file->ctrl->block_size;
+    file->head.write_pos = CM_CALC_ALIGN(sizeof(log_file_head_t), file->ctrl->block_size);
+    file->ctrl->status = LOG_FILE_CURRENT;
+    file->ctrl->archived = OG_FALSE;
+    log_flush_head(session, file);
+    if (db_save_log_ctrl(session, new_curr_file, session->kernel->id) != OG_SUCCESS) {
+        CM_ABORT(0, "[Log Replayer] ABORT INFO: save control space file failed when reset log file for promote");
+    }
+
+    redo_ctx->curr_file = new_curr_file;
+    redo_ctx->active_file = new_curr_file;
+    dtc_my_ctrl(session)->log_first = redo_ctx->active_file;
+    dtc_my_ctrl(session)->log_last = redo_ctx->curr_file;
+    if (db_save_core_ctrl(session) != OG_SUCCESS) {
+        CM_ABORT(0, "[Log Replayer] ABORT INFO: save core control file failed when reset log file for promote");
+    }
+
+    OG_LOG_RUN_INF("[Log Replayer] log file group reset done, boundary file %u asn %u, curr file %u asn %u",
+        (redo_ctx->curr_file + redo_ctx->logfile_hwm - 1) % redo_ctx->logfile_hwm,
+        rcy_point.asn, redo_ctx->curr_file, rcy_point.asn + 1);
+}
+
 static void lrpl_process_for_failover(knl_session_t *session)
 {
     log_context_t *redo_ctx = &session->kernel->redo_ctx;
@@ -507,7 +579,8 @@ static void lrpl_try_repair_file_offset(knl_session_t *session)
     uint64 lfn = 0;
     uint64 scn;
 
-    if (session->kernel->lrcv_mgr.streams[0].reconnected || DB_IS_RAFT_ENABLED(session->kernel)) {
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
+    if (lrcv == NULL || lrcv->reconnected || DB_IS_RAFT_ENABLED(session->kernel)) {
         return;
     }
 
@@ -534,13 +607,16 @@ static void lrpl_try_repair_file_offset(knl_session_t *session)
      * Set reconnected to true, to prevent parsing current redo file
      * and increasing free size repeatably.
      */
-    session->kernel->lrcv_mgr.streams[0].reconnected = OG_TRUE;
+    lrcv->reconnected = OG_TRUE;
 }
 
 static inline bool32 lrpl_can_failover(knl_session_t *session)
 {
     lrpl_context_t *lrpl = &session->kernel->lrpl_ctx;
-    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
+    if (lrcv == NULL) {
+        return (bool32)(lrpl->has_gap || lrpl->load_fail_cnt >= LOAD_FAIL_THRESHOLD);
+    }
     
     return (bool32)(lrcv->status == LRCV_NEED_REPAIR || lrpl->has_gap ||
             !lrpl_need_replay(session, &lrpl->curr_point) ||
@@ -681,29 +757,112 @@ static void lrpl_update_resetlog_scn(knl_session_t *session)
     }
 }
 
+/*
+ * Snapshot each source stream's received-batch watermark and bound state.
+ *
+ * The per-stream received-batch watermark (lrcv->stream_flushed_lfn) is
+ * advanced only when a real redo batch is flushed into this standby's log
+ * file, never by heart beats, so it is the correct "new redo arrived" signal
+ * for the idle-skip logic below.  It is written atomically by the receiver
+ * thread and read here.  The drain-certificate frontier (lrcv->lsn_frontier)
+ * is intentionally not used for the decision: it also advances on every
+ * drained heart beat (the primary's LSN clock moves during idle), which would
+ * otherwise start a full recovery cycle every second for nothing.  The
+ * barrier inside a cycle still uses lsn_frontier for ordering; whether gated
+ * redo is waiting is tracked persistently in lrpl->pending_gated_redo by the
+ * recovery path (the per-node recv_lsn array is freed when a cycle closes, so
+ * it cannot be read between cycles).
+ */
+static void dtc_lrpl_snapshot_frontier(knl_session_t *session, uint64 *flushed_lfn, bool32 *bound)
+{
+    lrcv_mgr_t *mgr = &session->kernel->lrcv_mgr;
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        lrcv_context_t *lrcv = &mgr->streams[i];
+        bool32 is_bound = (lrcv->stream_bound && lrcv->status == LRCV_READY);
+        flushed_lfn[i] = is_bound ? (uint64)cm_atomic_get((atomic_t *)&lrcv->stream_flushed_lfn) : 0;
+        bound[i] = is_bound;
+    }
+}
+
 void dtc_lrpl_proc_loop(thread_t *thread)
 {
     knl_session_t *session = (knl_session_t *)thread->argument;
     lrpl_context_t *lrpl = &session->kernel->lrpl_ctx;
     dtc_node_ctrl_t *node_ctrl = NULL;
+    uint64 last_flushed[OG_MAX_INSTANCES];
+    bool32 last_bound[OG_MAX_INSTANCES];
+    bool32 first_cycle = OG_TRUE;
+
     for (uint32 i = 0; i < g_dtc->profile.node_count; i++) {
         node_ctrl = dtc_get_ctrl(session, i);
         lrpl->dtc_curr_point[i] = node_ctrl->rcy_point;
     }
+    dtc_lrpl_snapshot_frontier(session, last_flushed, last_bound);
 
     while (!thread->closed) {
         if (rc_is_master() == OG_TRUE && lrpl->is_done == OG_FALSE) {
-            OG_LOG_RUN_INF("[DTC LRPL]oGRAC master start lrpl replay");
-            lrpl->is_replaying = OG_TRUE;
-            if (dtc_recover(session) != OG_SUCCESS) {
-                CM_ABORT_REASONABLE(0, "ABORT INFO: [DTC LRPL]dtc lrpl recovery failed");
-                return;
+            /*
+             * Idle-cycle suppression: while the standby is open and fully
+             * caught up, a full recovery cycle (context init + per-node read
+             * threads + log scan + checkpoint) would otherwise restart every
+             * second for nothing, burning CPU on an idle standby.  Start a
+             * new cycle only when there is actually something new to replay:
+             *  - the very first iteration (log files must be scanned at least
+             *    once, e.g. redo received before the database opened),
+             *  - a stream has been (re)bound since the last cycle (its local
+             *    log files may hold redo that predates the first batch), or
+             *  - any bound stream's received-batch watermark advanced since
+             *    the last cycle (new redo was flushed while we were idle), or
+             *  - the last cycle ended with received-but-unapplied redo
+             *    (lrpl->pending_gated_redo): retry until the cross-node drain
+             *    barrier opens, at which point the redo is applied and the
+             *    flag is cleared by the next cycle's end.
+             * New redo always moves the received-batch watermark before it
+             * can be applied, so no replay is lost; a cycle that did run
+             * persists the applied pages with its synchronous full
+             * checkpoint, then the loop goes back to sleep until the next
+             * watermark movement.
+             */
+            bool32 need_cycle = first_cycle;
+            first_cycle = OG_FALSE;
+            if (!need_cycle) {
+                uint64 flushed[OG_MAX_INSTANCES];
+                bool32 bound[OG_MAX_INSTANCES];
+                dtc_lrpl_snapshot_frontier(session, flushed, bound);
+                for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+                    if (bound[i] != last_bound[i] || flushed[i] != last_flushed[i]) {
+                        need_cycle = OG_TRUE;
+                        break;
+                    }
+                }
+                if (!need_cycle && lrpl->pending_gated_redo) {
+                    need_cycle = OG_TRUE;
+                }
             }
-            lrpl->is_replaying = OG_FALSE;
+
+            if (need_cycle) {
+                OG_LOG_RUN_INF("[DTC LRPL]oGRAC master start lrpl replay");
+                lrpl->is_replaying = OG_TRUE;
+                if (dtc_recover(session) != OG_SUCCESS) {
+                    CM_ABORT_REASONABLE(0, "ABORT INFO: [DTC LRPL]dtc lrpl recovery failed");
+                    return;
+                }
+                lrpl->is_replaying = OG_FALSE;
+                /*
+                 * A full-recovery cycle on an OPEN standby ends as soon as all
+                 * source streams are caught up (see dtc_rcy_need_continue),
+                 * after its synchronous full checkpoint has persisted the
+                 * replayed pages.  Re-arm for the next cycle so redo that
+                 * arrives later is still applied; the frontier comparison
+                 * above keeps an idle standby from rebuilding the cycle.
+                 */
+                lrpl->is_done = OG_FALSE;
+                dtc_lrpl_snapshot_frontier(session, last_flushed, last_bound);
+            }
         }
         cm_sleep(STANDBY_LRPL_WAIT_SLEEP_TIME);
     }
-    
+
     return;
 }
 
@@ -801,9 +960,9 @@ bool32 lrpl_replay_blocked(knl_session_t *session)
 {
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
     lrpl_context_t *lrpl = &kernel->lrpl_ctx;
-    lrcv_context_t *lrcv = &kernel->lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
 
-    if (DB_STATUS(session) != DB_STATUS_OPEN || lrcv->status < LRCV_READY) {
+    if (DB_STATUS(session) != DB_STATUS_OPEN || lrcv == NULL || lrcv->status < LRCV_READY) {
         return OG_FALSE;
     }
 

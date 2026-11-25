@@ -375,8 +375,10 @@ static status_t cm_raw_read_file(int32 handle, int64 offset, void *buf, int32 si
     *return_size = 0;
     ret = g_raw_device_op.raw_pread(handle, buf, size, offset, return_size);
     if (ret != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[CM_DEVICE] Failed to read file raw_pread ret=%d total_size: %d already read size: %d.",
-                       ret, size, *return_size);
+        OG_LOG_RUN_ERR_LIMIT(LOG_PRINT_INTERVAL_SECOND_20,
+                             "[CM_DEVICE] Failed to read file raw_pread ret=%d handle=%d offset=%lld "
+                             "total_size: %d already read size: %d.",
+                             ret, handle, (long long)offset, size, *return_size);
         return OG_ERROR;
     }
     OG_LOG_DEBUG_INF("[CM_DEVICE] Success to read file total_size: %d already read size: %d.", size, *return_size);

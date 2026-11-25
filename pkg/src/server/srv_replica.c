@@ -16,6 +16,7 @@
 #include "cs_pipe.h"
 #include "srv_agent.h"
 #include "srv_instance.h"
+#include "dtc_switchover.h"
 
 typedef enum en_replica_type {
     REPLICA_LRCV = 0,
@@ -26,12 +27,15 @@ typedef enum en_replica_type {
 
 static void srv_clear_lrcv_ctx(lrcv_context_t *lrcv)
 {
+    knl_instance_t *kernel = lrcv->session->kernel;
+
     cm_spin_lock(&lrcv->lock, NULL);
     cm_aligned_free(&lrcv->send_buf.read_buf);
     cm_aligned_free(&lrcv->extend_buf.read_buf);
     cm_aligned_free(&lrcv->recv_buf.read_buf);
     cm_aligned_free(&lrcv->d_ctx.compressed_buf);
     (void)ZSTD_freeDCtx(lrcv->d_ctx.zstd_dctx);
+    lrcv->d_ctx.zstd_dctx = NULL;
 
     if (lrcv->state == REP_STATE_DEMOTE_REQUEST || lrcv->state == REP_STATE_WAITING_DEMOTE) {
         lrcv->state = REP_STATE_DEMOTE_FAILED;
@@ -39,9 +43,42 @@ static void srv_clear_lrcv_ctx(lrcv_context_t *lrcv)
         lrcv->state = REP_STATE_NORMAL;
     }
 
-    if (lrcv->status != LRCV_NEED_REPAIR) {
-        lrcv->status = LRCV_DISCONNECTED;
-        lrcv->peer_role = PEER_UNKNOWN;
+    /*
+     * Always reset per-connection state on cleanup.  A preserved
+     * LRCV_NEED_REPAIR (plus PEER_PRIMARY) used to survive into the next
+     * connection that reused this slot: its lrcv_proc immediately fell into
+     * the lrcv_need_suspend() sleep loop and never processed the fresh
+     * REP_QUERY_STATUS_REQ, so the stream could never bind again (observed
+     * as a permanently CONNECTED-but-silent LSND after a notify_repair
+     * disconnect under TPCC load).  Repair state is re-learned from the
+     * primary's notify_repair flag on the next handshake, so nothing is lost
+     * by clearing it here.
+     */
+    lrcv->status = LRCV_DISCONNECTED;
+    lrcv->peer_role = PEER_UNKNOWN;
+    lrcv->taken_over = OG_FALSE;
+
+    /*
+     * During a cluster switchover handshake, a stream disconnect means the
+     * source primary node has finished demoting (each demoting node waits for
+     * the standby replay point before closing its sender).  Mark the stream
+     * terminal so the replay drain barrier stops gating the other streams on
+     * its frozen frontier; otherwise the coordinator's own stream can never
+     * drain and the handshake deadlocks.
+     *
+     * The terminal flag alone is not enough: this context is cleared right
+     * below (stream_bound = FALSE, src_node_id = 0), and the drain barrier
+     * resolves streams through lrcv_get_stream(), which only returns bound
+     * streams.  Record the node in the persistent source-absent bitmap too,
+     * so the barrier can skip it until a new stream binds (which clears the
+     * bit).  Without this the demoted node's frozen received watermark keeps
+     * gating every other stream and standby replay stalls forever.
+     */
+    if (dtc_switch_in_demote_wait()) {
+        lrcv->terminal = OG_TRUE;
+        lrcv->session->kernel->lrcv_mgr.source_absent |= ((uint64)1 << lrcv->src_node_id);
+        OG_LOG_RUN_INF("[CLUSTER SWITCHOVER] stream %u marked terminal on disconnect during demote",
+            lrcv->src_node_id);
     }
 
     errno_t err = memset_sp(&lrcv->wait_info, sizeof(log_switch_wait_info_t), 0, sizeof(log_switch_wait_info_t));
@@ -51,6 +88,12 @@ static void srv_clear_lrcv_ctx(lrcv_context_t *lrcv)
     lrcv->role_spec_building = OG_FALSE;
     lrcv->is_building = OG_FALSE;
     lrcv_close_stream_files(lrcv);
+
+    /* Publish stream identity and session teardown atomically with lookups. */
+    cm_spin_lock(&kernel->lrcv_mgr.lock, NULL);
+    if (lrcv->stream_bound && lrcv->src_node_id < OG_MAX_INSTANCES) {
+        kernel->lrcv_mgr.bound_mask &= ~((uint64)1 << lrcv->src_node_id);
+    }
     lrcv->stream_bound = OG_FALSE;
     lrcv->src_dbid = 0;
     lrcv->src_node_id = 0;
@@ -59,6 +102,7 @@ static void srv_clear_lrcv_ctx(lrcv_context_t *lrcv)
     lrcv->stream_flushed_lfn = 0;
     lrcv->pipe = NULL;
     lrcv->session = NULL;
+    cm_spin_unlock(&kernel->lrcv_mgr.lock);
     cm_spin_unlock(&lrcv->lock);
 }
 
@@ -172,6 +216,17 @@ static status_t srv_init_lrcv_ctx(session_t *session, text_t *host_text, lrcv_co
     ogx->recv_pack = session->recv_pack;
     ogx->timeout = knl_session->kernel->attr.repl_wait_timeout;
     ogx->state = REP_STATE_NORMAL;
+    /*
+     * A new connection must start from clean per-connection state.  The slot
+     * may have been reused from a previous session that ended with
+     * NEED_REPAIR / PEER_PRIMARY (see srv_clear_lrcv_ctx); carrying those
+     * over makes lrcv_need_suspend() true before the handshake is processed,
+     * permanently wedging the stream on this slot.
+     */
+    ogx->status = LRCV_DISCONNECTED;
+    ogx->peer_role = PEER_UNKNOWN;
+    ogx->terminal = OG_FALSE;
+    ogx->reconnected = OG_FALSE;
 
     return OG_SUCCESS;
 }

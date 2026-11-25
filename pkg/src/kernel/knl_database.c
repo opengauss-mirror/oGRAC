@@ -1242,7 +1242,7 @@ static status_t db_recovery_to_initphase2(knl_session_t *session, bool32 has_off
         return OG_ERROR;
     }
 
-    if (kernel->lrcv_mgr.streams[0].is_building) {
+    if (kernel->backup_ctx.bak.is_building) {
         if (rst_truncate_datafile(session) != OG_SUCCESS) {
             return OG_ERROR;
         }
@@ -1587,13 +1587,18 @@ static void db_build_set_role(database_t *db, build_type_t build_type)
 
 static bool32 db_build_check_peer_role(knl_session_t *session, build_type_t build_type)
 {
-    lrcv_context_t *lrcv = &session->kernel->lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
     uint32 retry_count = OG_BACKUP_RETRY_COUNT;
 
     // cluster standby build is decoupled from redo transport (build first, configure
     // LOG_ARCHIVE_DEST_n later), so there is no need to wait for the log shipping handshake
     if (DB_ATTR_CLUSTER(session)) {
         return OG_TRUE;
+    }
+
+    if (lrcv == NULL) {
+        OG_THROW_ERROR(ERR_PRI_NOT_CONNECT, "peer role");
+        return OG_FALSE;
     }
 
     while (lrcv->peer_role == PEER_UNKNOWN) {
@@ -1685,16 +1690,21 @@ static status_t db_build_restore(knl_session_t *session, knl_build_def_t *def)
     database_t *db = &kernel->db;
     status_t status = OG_ERROR;
     bak_t *bak = &kernel->backup_ctx.bak;
+    lrcv_context_t *lrcv = NULL;
 
     if (db_build_restore_precheck(session, def) != OG_SUCCESS) {
         return OG_ERROR;
     }
 
-    if (def->build_type != BUILD_AUTO) {
-        session->kernel->lrcv_mgr.streams[0].role_spec_building = OG_TRUE;
+    lrcv = lrcv_get_local_stream(session);
+
+    if (lrcv != NULL && def->build_type != BUILD_AUTO) {
+        lrcv->role_spec_building = OG_TRUE;
+    }
+    if (lrcv != NULL) {
+        lrcv->is_building = OG_TRUE;
     }
 
-    kernel->lrcv_mgr.streams[0].is_building = OG_TRUE;
     db->status = def->param_ctrl.is_increment || def->param_ctrl.is_repair ? db->status : DB_STATUS_CREATING;
     db->ctrl.core.db_role = REPL_ROLE_PHYSICAL_STANDBY;
     bak->build_retry_time = BAK_BUILD_INIT_RETRY_TIME;
@@ -1709,7 +1719,9 @@ static status_t db_build_restore(knl_session_t *session, knl_build_def_t *def)
 
     if (status != OG_SUCCESS) {
         db->status = DB_STATUS_NOMOUNT;
-        kernel->lrcv_mgr.streams[0].is_building = OG_FALSE;
+        if (lrcv != NULL) {
+            lrcv->is_building = OG_FALSE;
+        }
         OG_LOG_RUN_ERR("[DB] failed to backup database");
         return OG_ERROR;
     }
@@ -1723,10 +1735,14 @@ status_t db_build_baseline(knl_session_t *session, knl_build_def_t *def)
     database_t *db = &kernel->db;
     bool32 no_wait = OG_FALSE;
     errno_t err;
+    lrcv_context_t *lrcv = NULL;
 
     if (db_build_restore(session, def) != OG_SUCCESS) {
         return OG_ERROR;
     }
+
+    /* The source stream may bind while the restore is in progress. */
+    lrcv = lrcv_get_local_stream(session);
 
     OG_LOG_RUN_INF("[DB] database backup successfully");
 
@@ -1747,24 +1763,28 @@ status_t db_build_baseline(knl_session_t *session, knl_build_def_t *def)
 
     if (!def->param_ctrl.is_increment && !def->param_ctrl.is_repair) {
         if (db_mount(session) != OG_SUCCESS) {
-            kernel->lrcv_mgr.streams[0].is_building = OG_FALSE;
+            if (lrcv != NULL) {
+                lrcv->is_building = OG_FALSE;
+            }
             return OG_ERROR;
         }
     }
 
-    kernel->lrcv_mgr.streams[0].reconnected = OG_FALSE;
+    lrcv_set_reconnected(session, OG_FALSE);
 
     /*
      * If one node connects to primary and wants to build a cascaded standby, the primary will disconnect
      * with it after build successfully. So in this scenario, there is no need to wait log receiver to become prepared.
      */
-    no_wait = (bool32)(DB_IS_CASCADED_PHYSICAL_STANDBY(db) && kernel->lrcv_mgr.streams[0].role_spec_building &&
-                       kernel->lrcv_mgr.streams[0].peer_role == PEER_PRIMARY);
+    no_wait = (bool32)(DB_IS_CASCADED_PHYSICAL_STANDBY(db) && lrcv != NULL && lrcv->role_spec_building &&
+                       lrcv->peer_role == PEER_PRIMARY);
 
     db_open_opt_t open_options = { OG_FALSE,      OG_FALSE, OG_FALSE, OG_FALSE, OG_TRUE, DB_OPEN_STATUS_NORMAL,
                                    OG_INVALID_LFN };
     if (db_open(session, &open_options) != OG_SUCCESS) {
-        kernel->lrcv_mgr.streams[0].is_building = OG_FALSE;
+        if (lrcv != NULL) {
+            lrcv->is_building = OG_FALSE;
+        }
         return OG_ERROR;
     }
 
@@ -1772,7 +1792,10 @@ status_t db_build_baseline(knl_session_t *session, knl_build_def_t *def)
         db_wait_repl_ready(session);
     }
 
-    kernel->lrcv_mgr.streams[0].is_building = OG_FALSE;
+    if (lrcv != NULL) {
+        lrcv->is_building = OG_FALSE;
+    }
+    lrcv_seed_primary_resume_points(session);
     OG_LOG_RUN_INF("database build successfully");
     return OG_SUCCESS;
 }
@@ -1828,7 +1851,6 @@ char *db_get_condition(knl_session_t *session)
 {
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
     switch_ctrl_t *ctrl = &kernel->switch_ctrl;
-    lrcv_context_t *lrcv = &kernel->lrcv_mgr.streams[0];
     lftc_clt_ctx_t *lftc_clt = &kernel->lftc_client_ctx;
 
     switch (ctrl->request) {
@@ -1851,12 +1873,12 @@ char *db_get_condition(knl_session_t *session)
     }
 
     // for other scenarios, check log receiver in standby role
-    if (lrcv->status == LRCV_NEED_REPAIR || lftc_clt->arch_lost || kernel->rcy_ctx.log_decrypt_failed ||
+    if (lrcv_has_status(session, LRCV_NEED_REPAIR) || lftc_clt->arch_lost || kernel->rcy_ctx.log_decrypt_failed ||
         lrpl_replay_blocked(session)) {
         return "NEED REPAIR";
-    } else if (lrcv->state == REP_STATE_WAITING_DEMOTE) {
+    } else if (lrcv_has_state(session, REP_STATE_WAITING_DEMOTE)) {
         return "WAIT TO PROMOTE";
-    } else if (lrcv->status < LRCV_PREPARE) {
+    } else if (!lrcv_has_active_session(session) || lrcv_has_unready_stream(session)) {
         return "DISCONNECTED";
     } else {
         return "NORMAL";
@@ -1866,7 +1888,6 @@ char *db_get_condition(knl_session_t *session)
 char *db_get_needrepair_reason(knl_session_t *session)
 {
     knl_instance_t *kernel = (knl_instance_t *)session->kernel;
-    lrcv_context_t *lrcv = &kernel->lrcv_mgr.streams[0];
     lftc_clt_ctx_t *lftc_clt = &kernel->lftc_client_ctx;
 
     if (DB_IS_PRIMARY(&kernel->db)) {
@@ -1885,7 +1906,7 @@ char *db_get_needrepair_reason(knl_session_t *session)
         return "LOG DECRYPT FAILED";
     }
 
-    if (lrcv->status == LRCV_NEED_REPAIR) {
+    if (lrcv_has_status(session, LRCV_NEED_REPAIR)) {
         return "OTHER REASONS";
     }
 
@@ -2949,6 +2970,13 @@ static void db_promote_cluster_role_follower(knl_session_t *session, DbsRoleInfo
         ckpt_enable(session);
         g_standby_will_promote = OG_FALSE;
         lrpl->is_promoting = OG_FALSE;
+        /*
+         * Redo-stream replication: the promoted follower must start its log
+         * senders so the other side (now standby) receives this node's stream.
+         */
+        if (lsnd_init(session) != OG_SUCCESS) {
+            OG_LOG_RUN_WAR("[INST] [SWITCHOVER] failed to start log sender after follower promote");
+        }
         OG_LOG_RUN_INF("[INST] [SWITCHOVER] promote completed, running as primary");
     }
 }
@@ -2961,7 +2989,17 @@ static void db_wait_lrpl_done(knl_session_t *session)
     } else {
         lrpl_close(session);
         lrpl->is_closing = OG_TRUE;
-        while (lrpl->is_done != OG_TRUE) {
+        /*
+         * lrpl_close waits for the replayer thread to exit; an in-flight
+         * replay cycle (including its synchronous full checkpoint) completes
+         * before the thread exits, so is_replaying is the only condition
+         * worth waiting on here.  Do not wait for is_done: the standby LRPL
+         * loop re-arms is_done to FALSE after every cycle, so an idle,
+         * fully-caught-up standby would otherwise hang the promote forever.
+         * Correctness of "all streams drained" is guaranteed by the caller's
+         * readiness gate (dtc_switch_wait_drained).
+         */
+        while (lrpl->is_replaying) {
             cm_sleep(STANDBY_WAIT_SLEEP_TIME);
         }
         OG_LOG_RUN_INF("[INST] [SWITCHOVER] lrpl is done");
@@ -2982,22 +3020,32 @@ void db_promote_cluster_role(thread_t *thread)
     }
     if (!rc_is_master()) {
         lrpl->is_promoting = OG_TRUE;
-        ctrl_page_t *page = (ctrl_page_t *)cm_push(session->stack, kernel->db.ctrlfiles.items[0].block_size);
-        while (dtc_read_core_ctrl(session, page) == OG_SUCCESS) {
-            if (((core_ctrl_t *)&page->buf[0])->db_role == REPL_ROLE_PRIMARY) {
+        /*
+         * The DSS/DBStor device layer requires a 512-byte aligned buffer; a
+         * session-stack buffer is not guaranteed aligned, so read the core
+         * ctrl page into an aligned buffer (the follower promote path).
+         */
+        aligned_buf_t core_page;
+        if (cm_aligned_malloc((int64)kernel->db.ctrlfiles.items[0].block_size, "promote core ctrl",
+                              &core_page) != OG_SUCCESS) {
+            OG_LOG_RUN_ERR("[INST] [SWITCHOVER] failed to alloc aligned buffer for follower promote");
+            return;
+        }
+        while (dtc_read_core_ctrl(session, (ctrl_page_t *)core_page.aligned_buf) == OG_SUCCESS) {
+            if (((core_ctrl_t *)((ctrl_page_t *)core_page.aligned_buf)->buf)->db_role == REPL_ROLE_PRIMARY) {
                 kernel->db.ctrl.core.inc_backup_block = OG_TRUE;
                 db_promote_cluster_role_follower(session, role_info);
-                cm_pop(session->stack);
+                cm_aligned_free(&core_page);
                 return;
             }
             if (rc_is_master()) {
-                cm_pop(session->stack);
+                cm_aligned_free(&core_page);
                 OG_LOG_RUN_WAR("[INST] [SWITCHOVER] follower become reformer, go reformer promote");
                 goto reformerpromote;
             }
             cm_sleep(RC_RETRY_SLEEP);
         }
-        cm_pop(session->stack);
+        cm_aligned_free(&core_page);
         OG_LOG_RUN_ERR("[INST] [SWITCHOVER] follower inst start promote failed");
         knl_panic(0);
         return;

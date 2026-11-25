@@ -53,6 +53,7 @@
 #include "rc_reform.h"
 #include "knl_ckpt.h"
 #include "cm_debug.h"
+#include "dtc_switchover.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -514,6 +515,28 @@ static void srv_process_demote_request_core(knl_session_t *session, knl_instance
         CM_ABORT(0, "[INST] [SWITCHOVER] ABORT INFO: failed to save ctrlfile, demote failed");
     }
 
+    if (DB_IS_CLUSTER(session)) {
+        /*
+         * Cluster standby replay is DTC-driven: the rcy buffers are owned by
+         * the recovery cycle (dtc_rcy_init_replay_proc allocates them and the
+         * cycle frees them), so do not re-run rcy_init_proc here - it would
+         * memset a freed page_bucket and crash.  Mirrors db_switchover_proc_init.
+         *
+         * Do NOT start lsnd here: the demoted cluster is the redo receiver in
+         * the new topology, and its stale ARCH_DEST still points at the old
+         * standby.  A sender started at demote time would immediately connect
+         * out to the peer that is itself mid-switchover, rebind as a "primary"
+         * source for the same stream and flip the peer into a bogus cascaded
+         * standby, which stalls the peer's replay and deadlocks the sync wait
+         * (observed under load as a switchover timeout).  The new primary
+         * pushes redo to this side after promote; no local sender is needed.
+         */
+        if (lrpl_init(session) != OG_SUCCESS) {
+            CM_ABORT(0, "[INST] ABORT INFO: failed to create lrpl thread, demote failed");
+        }
+        return;
+    }
+
     if (KNL_RBP_ENABLE(kernel)) {
         if (rbp_aly_init(session) != OG_SUCCESS) {
             CM_ABORT(0, "[INST] ABORT INFO: failed to create rbp analyze thread");
@@ -538,6 +561,7 @@ static void srv_process_demote_request(void)
     switch_ctrl_t *ctrl = &kernel->switch_ctrl;
     knl_session_t *session = kernel->sessions[SESSION_ID_KERNEL];
     database_t *db = &kernel->db;
+    bool32 cluster_demote = dtc_switch_in_progress();
 
     if (db_check_backgroud_blocked(session, OG_TRUE, g_instance->sync_doing)) {
         return;
@@ -553,6 +577,17 @@ static void srv_process_demote_request(void)
         return;
     }
 
+    if (cluster_demote) {
+        /*
+         * Freeze new writes before the log-sync wait: the demote kills active
+         * sessions, but a background writer would keep opening new sessions
+         * and advancing the redo tail, so the sync point would never be
+         * reached (the standby can never catch up to a moving target).
+         */
+        db->is_readonly = OG_TRUE;
+        db->readonly_reason = PHYSICAL_STANDBY_SET;
+    }
+
     if (ctrl->state == SWITCH_WAIT_LOG_SYNC) {
         if (srv_wait_sync_log(kernel)) {
             cm_spin_unlock(&db->lock);
@@ -560,15 +595,44 @@ static void srv_process_demote_request(void)
         }
     }
 
-    if (!srv_demote_approved(kernel)) {
-        srv_reset_switch_request(ctrl);
-        cm_spin_unlock(&db->lock);
-        lsnd_reset_state(session);
-        OG_LOG_RUN_INF("[INST] [SWITCHOVER] demote failed, running as primary still");
-        return;
+    if (cluster_demote) {
+        /*
+         * Cluster demote: wait until every active redo stream is caught up on
+         * the standby cluster, then (coordinator only) wait for all primary
+         * peers to finish demote and approve through the existing lsnd path.
+         */
+        if (dtc_switch_wait_local_sync(session) != OG_SUCCESS) {
+            srv_reset_switch_request(ctrl);
+            cm_spin_unlock(&db->lock);
+            OG_LOG_RUN_ERR("[INST] [SWITCHOVER] cluster demote failed: local stream sync timeout");
+            return;
+        }
+        if (dtc_switch_am_coordinator()) {
+            if (dtc_switch_wait_peers_demoted() != OG_SUCCESS) {
+                srv_reset_switch_request(ctrl);
+                cm_spin_unlock(&db->lock);
+                OG_LOG_RUN_ERR("[INST] [SWITCHOVER] cluster demote failed: wait peers demote timeout");
+                return;
+            }
+            if (!srv_demote_approved(kernel)) {
+                srv_reset_switch_request(ctrl);
+                cm_spin_unlock(&db->lock);
+                lsnd_reset_state(session);
+                OG_LOG_RUN_ERR("[INST] [SWITCHOVER] cluster demote failed: not approved");
+                return;
+            }
+        }
+    } else {
+        if (!srv_demote_approved(kernel)) {
+            srv_reset_switch_request(ctrl);
+            cm_spin_unlock(&db->lock);
+            lsnd_reset_state(session);
+            OG_LOG_RUN_INF("[INST] [SWITCHOVER] demote failed, running as primary still");
+            return;
+        }
     }
 
-    kernel->lrcv_mgr.streams[0].reconnected = OG_TRUE;
+    lrcv_set_reconnected(session, OG_TRUE);
     db->is_readonly = OG_TRUE;
     db->readonly_reason = PHYSICAL_STANDBY_SET;
     db->ctrl.core.db_role = REPL_ROLE_PHYSICAL_STANDBY;
@@ -579,11 +643,24 @@ static void srv_process_demote_request(void)
 
     btree_cache_reset(session);
 
+    /*
+     * Reset the switch request before starting the standby-side threads: in
+     * cluster demote the new primary connects only after this handshake
+     * completes, so lsnd_init's "wait for primary connection in switchover"
+     * path must not block the demote completion (it would deadlock the peer
+     * ack aggregation on the coordinator).
+     */
+    if (cluster_demote) {
+        srv_reset_switch_request(ctrl);
+    }
     srv_process_demote_request_core(session, kernel);
 
-    srv_reset_switch_request(ctrl);
+    if (!cluster_demote) {
+        srv_reset_switch_request(ctrl);
+    }
     cm_spin_unlock(&db->lock);
 
+    dtc_switch_notify_demote_done(session);
     OG_LOG_RUN_INF("[INST] [SWITCHOVER] demote completed, running as standby");
 }
 
@@ -766,8 +843,13 @@ static void srv_promote_get_peer_url(promote_record_t *promote_record)
 {
     knl_session_t *session = g_instance->kernel.sessions[SESSION_ID_KERNEL];
     switch_ctrl_t *ctrl = &g_instance->kernel.switch_ctrl;
-    lrcv_context_t *lrcv = &g_instance->kernel.lrcv_mgr.streams[0];
+    lrcv_context_t *lrcv = lrcv_get_local_stream(session);
     errno_t err;
+
+    if (lrcv == NULL) {
+        promote_record->peer_url[0] = '\0';
+        return;
+    }
 
     err = snprintf_s(promote_record->peer_url, sizeof(promote_record->peer_url), sizeof(promote_record->peer_url) - 1,
         "%s:%u", lrcv->primary_host, (uint32)ctrl->peer_repl_port);
@@ -969,7 +1051,7 @@ static void srv_process_force_promote_request(void)
     }
     knl_securec_check(err);
 
-    if ((force && kernel->lrcv_mgr.streams[0].session != NULL) || !cm_spin_try_lock(&db->lock)) {
+    if ((force && lrcv_has_active_session(session)) || !cm_spin_try_lock(&db->lock)) {
         return;
     }
 
@@ -2194,7 +2276,7 @@ status_t srv_stop_all_session(shutdown_context_t *ogx)
             }
 
             // If log receiver thread has been created, need to first stop it.
-            if (session->kernel->lrcv_mgr.streams[0].session != NULL) {
+            if (lrcv_has_active_session(session)) {
                 lrcv_close(session);
             }
 

@@ -14,9 +14,13 @@
 #include "dtc_ckpt.h"
 #include "dtc_dcs.h"
 #include "dtc_buffer.h"
+#include "dtc_recovery.h"
 #include "dtc_trace.h"
 #include "knl_ckpt.h"
 #include "knl_rbp.h"
+#include "knl_database.h"
+#include "knl_session.h"
+#include "repl_log_recv.h"
 #include "cm_device.h"
 
 static int32 cmp_page_id(const void *pa, const void *pb)
@@ -993,34 +997,205 @@ status_t dtc_cal_redo_size(knl_session_t *session, log_point_t pre_lrp_point, lo
     return OG_SUCCESS;
 }
 
+/*
+ * Byte distance between two log points of the same redo stream.
+ *
+ * The redo file sequence of one source node is treated as a contiguous
+ * address space: file_size * asn + block_id * block_size.  Only points with
+ * the same resetlogs id are comparable: after a resetlog / failover the
+ * source renumbers its redo files, so a delta across rst_id has no meaning
+ * and is reported as 0 for this interval.
+ */
+static uint64 dtc_calc_log_size_between(const log_file_t *log_file, const log_point_t *begin, const log_point_t *end)
+{
+    uint64 begin_off;
+    uint64 end_off;
+    uint64 file_blocks;
+    uint64 begin_block;
+    uint64 end_block;
+
+    if (begin->rst_id != end->rst_id || end->asn < begin->asn ||
+        (end->asn == begin->asn && end->block_id < begin->block_id)) {
+        return 0;
+    }
+
+    /*
+     * Clamp each point's block position to the nominal file capacity: after
+     * a receiver crash the file head write_pos can exceed ctrl->size, which
+     * makes a raw byte comparison wrap into a huge delta (or, with the
+     * underflow guard below, suppresses a valid interval).  The overflowed
+     * bytes logically belong to the next file, so clamping keeps the
+     * measured volume monotonic and sane.
+     */
+    file_blocks = log_file->ctrl->size / log_file->ctrl->block_size;
+    begin_block = MIN((uint64)begin->block_id, file_blocks);
+    end_block = MIN((uint64)end->block_id, file_blocks);
+
+    begin_off = (uint64)begin->asn * log_file->ctrl->size + begin_block * log_file->ctrl->block_size;
+    end_off = (uint64)end->asn * log_file->ctrl->size + end_block * log_file->ctrl->block_size;
+    /*
+     * A stream whose local file has been over-written past its nominal size
+     * (e.g. after a receiver crash the file head write_pos can exceed
+     * ctrl->size) can make the byte offset of the "ahead" point smaller than
+     * the baseline even though asn is larger.  Never report a wrapped,
+     * negative delta for that interval; 0 keeps the sample sane and the next
+     * sample resumes from the refreshed baseline.
+     */
+    if (end_off < begin_off) {
+        return 0;
+    }
+    return end_off - begin_off;
+}
+
+/*
+ * Cluster (DTC/RAC) standby: aggregate the redo volume across every bound
+ * source stream.
+ *
+ * The receive frontier is the RFS flush point (redo durably written into the
+ * standby's per-node redo files) and the replay frontier is the per-source
+ * rcy point maintained by the DTC replayer.  These live structures advance
+ * with every batch/cycle, unlike the local node ctrl points used by the
+ * primary path (on a standby those are only refreshed at the end of a
+ * full-recovery cycle), so the sampled deltas stay meaningful under
+ * continuous replication.
+ */
+static status_t dtc_cal_standby_redo_size(knl_session_t *session, const log_point_t *pre_lrp_points,
+                                          const log_point_t *pre_rcy_points, rc_redo_stat_list_t *redo_stat_list)
+{
+    dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+    lrcv_mgr_t *lrcv_mgr = &session->kernel->lrcv_mgr;
+    uint64 generate_size = 0;
+    uint64 recycle_size = 0;
+    uint64 recovery_size = 0;
+
+    redo_stat_list->redo_generate_size = 0;
+    redo_stat_list->redo_recycle_size = 0;
+    redo_stat_list->redo_recovery_size = 0;
+
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        lrcv_context_t *lrcv = &lrcv_mgr->streams[i];
+        log_file_t *log_file = NULL;
+        const log_point_t *curr_lrp = NULL;
+        const log_point_t *curr_rcy = NULL;
+        uint32 node_id;
+
+        if (!lrcv->stream_bound) {
+            continue;
+        }
+
+        node_id = lrcv->src_node_id;
+        if (node_id >= OG_MAX_INSTANCES) {
+            continue;
+        }
+
+        log_file = &LOGFILE_SET(session, node_id)->items[0];
+        curr_lrp = &lrcv->flush_point;
+        curr_rcy = &dtc_rcy->rcy_log_points[node_id].rcy_point;
+
+        generate_size += dtc_calc_log_size_between(log_file, &pre_lrp_points[node_id], curr_lrp);
+        recycle_size += dtc_calc_log_size_between(log_file, &pre_rcy_points[node_id], curr_rcy);
+        recovery_size += dtc_calc_log_size_between(log_file, curr_rcy, curr_lrp);
+    }
+
+    redo_stat_list->redo_generate_size = generate_size / SIZE_M(1);
+    redo_stat_list->redo_recycle_size = recycle_size / SIZE_M(1);
+    redo_stat_list->redo_recovery_size = recovery_size / SIZE_M(1);
+
+    return OG_SUCCESS;
+}
+
+/* Snapshot the current per-stream frontiers as the baseline for the next sample. */
+static void dtc_save_standby_redo_points(knl_session_t *session, log_point_t *pre_lrp_points,
+                                         log_point_t *pre_rcy_points)
+{
+    dtc_rcy_context_t *dtc_rcy = DTC_RCY_CONTEXT;
+    lrcv_mgr_t *lrcv_mgr = &session->kernel->lrcv_mgr;
+
+    for (uint32 i = 0; i < OG_MAX_INSTANCES; i++) {
+        lrcv_context_t *lrcv = &lrcv_mgr->streams[i];
+        uint32 node_id;
+
+        if (!lrcv->stream_bound) {
+            continue;
+        }
+
+        node_id = lrcv->src_node_id;
+        if (node_id >= OG_MAX_INSTANCES) {
+            continue;
+        }
+
+        pre_lrp_points[node_id] = lrcv->flush_point;
+        pre_rcy_points[node_id] = dtc_rcy->rcy_log_points[node_id].rcy_point;
+    }
+}
+
 void dtc_calculate_rcy_redo_size(knl_session_t *session, buf_ctrl_t *ckpt_first_ctrl)
 {
     rc_redo_stat_t *redo_stat = &g_rc_ctx->redo_stat;
     static timeval_t update_time = { 0 };
     static log_point_t pre_rcy_point = { 0 };
     static log_point_t pre_lrp_point = { 0 };
+    static log_point_t pre_stdby_lrp_points[OG_MAX_INSTANCES] = { 0 };
+    static log_point_t pre_stdby_rcy_points[OG_MAX_INSTANCES] = { 0 };
+    static bool32 first_sample = OG_TRUE;
+    static bool32 last_standby = OG_FALSE;
     page_id_t page_id_tmp = { 0 };
+    bool32 is_standby;
     
     cm_spin_lock(&redo_stat->lock, NULL);
     redo_stat->ckpt_num++;
     if (redo_stat->ckpt_num == CKPT_CAL_REDO_TIMES) {
         dtc_node_ctrl_t *node_ctrl = dtc_my_ctrl(session);
         timeval_t now_time;
-        rc_redo_stat_list_t redo_stat_list;
+        rc_redo_stat_list_t redo_stat_list = { 0 };
         uint32 redo_stat_insert_ind = 0;
 
-        if (dtc_cal_redo_size(session, pre_lrp_point, pre_rcy_point, &redo_stat_list) != OG_SUCCESS) {
+        is_standby = !DB_IS_PRIMARY(&session->kernel->db);
+        if (is_standby != last_standby) {
+            /* role changed (switchover/failover): restart sampling from scratch */
+            first_sample = OG_TRUE;
+            last_standby = is_standby;
+        }
+
+        (void)cm_gettimeofday(&now_time);
+
+        if (is_standby) {
+            if (dtc_cal_standby_redo_size(session, pre_stdby_lrp_points, pre_stdby_rcy_points,
+                                          &redo_stat_list) != OG_SUCCESS) {
+                redo_stat->ckpt_num--;
+                cm_spin_unlock(&redo_stat->lock);
+                OG_LOG_RUN_WAR("[DTC] update dtc rcy redo stat failed, try next time");
+                return;
+            }
+        } else if (dtc_cal_redo_size(session, pre_lrp_point, pre_rcy_point, &redo_stat_list) != OG_SUCCESS) {
             redo_stat->ckpt_num--;
             cm_spin_unlock(&redo_stat->lock);
             OG_LOG_RUN_WAR("[DTC] update dtc rcy redo stat failed, try next time");
             return;
         }
 
+        if (first_sample) {
+            /* first sample in this role: only establish the baseline */
+            if (is_standby) {
+                dtc_save_standby_redo_points(session, pre_stdby_lrp_points, pre_stdby_rcy_points);
+            } else {
+                pre_lrp_point = node_ctrl->lrp_point;
+                pre_rcy_point = node_ctrl->rcy_point;
+            }
+            update_time = now_time;
+            redo_stat->ckpt_num = 0;
+            first_sample = OG_FALSE;
+            cm_spin_unlock(&redo_stat->lock);
+            return;
+        }
+
         redo_stat_insert_ind = redo_stat->redo_stat_cnt < CKPT_LOG_REDO_STAT_COUNT ?
                                redo_stat->redo_stat_cnt : redo_stat->redo_stat_start_ind;
 
-        (void)cm_gettimeofday(&now_time);
         uint64 time_interval = TIMEVAL_DIFF_S(&update_time, &now_time);
+        if (time_interval == 0) {
+            time_interval = 1;
+        }
         redo_stat_list.time_interval = time_interval;
         redo_stat_list.redo_generate_speed = (double)redo_stat_list.redo_generate_size / (double)time_interval;
         redo_stat_list.redo_recycle_speed = (double)redo_stat_list.redo_recycle_size / (double)time_interval;
@@ -1029,11 +1204,15 @@ void dtc_calculate_rcy_redo_size(knl_session_t *session, buf_ctrl_t *ckpt_first_
 
         redo_stat->stat_list[redo_stat_insert_ind] = redo_stat_list;
         redo_stat->redo_stat_cnt = redo_stat->redo_stat_cnt < CKPT_LOG_REDO_STAT_COUNT ?
-                                   redo_stat->redo_stat_cnt + 1 : redo_stat->redo_stat_cnt;
+                               redo_stat->redo_stat_cnt + 1 : redo_stat->redo_stat_cnt;
         redo_stat->redo_stat_start_ind = (redo_stat_insert_ind + 1) % CKPT_LOG_REDO_STAT_COUNT;
 
-        pre_lrp_point = node_ctrl->lrp_point;
-        pre_rcy_point = node_ctrl->rcy_point;
+        if (is_standby) {
+            dtc_save_standby_redo_points(session, pre_stdby_lrp_points, pre_stdby_rcy_points);
+        } else {
+            pre_lrp_point = node_ctrl->lrp_point;
+            pre_rcy_point = node_ctrl->rcy_point;
+        }
         update_time = now_time;
 
         redo_stat->ckpt_num = 0;

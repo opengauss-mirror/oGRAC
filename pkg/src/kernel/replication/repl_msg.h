@@ -63,7 +63,9 @@ typedef enum e_rep_msg_type {
     REP_RECORD_BACKUPSET_RESP = 18,
     REP_LFTC_LZ4_DATA = 19,
     REP_LFTC_ZSTD_DATA = 20,
-    REP_LOG_SWITCH_WAIT_REQ = 21 // from standby to primary
+    REP_LOG_SWITCH_WAIT_REQ = 21, // from standby to primary
+    REP_CLUSTER_SWITCH_REQ = 22,  // cluster switchover request (standby -> primary)
+    REP_CLUSTER_SWITCH_RESP = 23, // cluster switchover response (primary -> standby)
 } rep_msg_type_t;
 
 typedef enum e_rep_state {
@@ -75,6 +77,7 @@ typedef enum e_rep_state {
     REP_STATE_STANDBY_PROMOTING = 5,
     REP_STATE_DEMOTE_FAILED = 6,
     REP_STATE_REJECTED = 7,
+    REP_STATE_CLUSTER_DEMOTE_REQUEST = 8, // lrcv-side trigger: send REP_CLUSTER_SWITCH_REQ
 } rep_state_t;
 
 typedef enum e_rep_login_type {
@@ -126,7 +129,7 @@ typedef struct st_rep_query_status_req {
     knl_scn_t reset_log_scn;
     uint32 src_dbid;      // source database id (redo stream identity)
     uint32 src_node_id;   // source node id (redo stream identity)
-    uint64 reserved[4];
+    uint64 reserved[5];
 } rep_query_status_req_t;
 
 typedef struct st_rep_query_status_resp {
@@ -151,8 +154,8 @@ typedef struct st_rep_hb_resp {
  * Drain certificate carried in REP_HEART_BEAT_REQ (version >= ST_VERSION_2):
  * curr_lsn is the source node's Lamport clock at certificate construction time,
  * drained means all redo with lsn <= curr_lsn has been flushed and sent to the
- * standby. The standby uses this per-stream frontier to preserve replay order
- * across source nodes.
+ * standby. The standby uses it as a per-stream LSN frontier to gate replay
+ * ordering.
  */
 typedef struct st_rep_hb_req {
     uint64 curr_lsn;
@@ -163,6 +166,29 @@ typedef struct st_rep_hb_req {
 typedef struct st_rep_switch_resp {
     rep_state_t state;
 } rep_switch_resp_t;
+
+/*
+ * Cluster switchover handshake (N-to-M redo stream replication):
+ * the standby cluster master sends REP_CLUSTER_SWITCH_REQ over a connected
+ * redo stream (stream 0 preferred; any ready stream may carry it, so a
+ * degraded primary cluster without node0 still works); the primary node
+ * whose log sender receives it validates the epoch and demotes the whole
+ * primary cluster, then replies REP_CLUSTER_SWITCH_RESP with the bitmap of
+ * demoted primary nodes.
+ */
+typedef struct st_rep_cluster_switch_req {
+    uint32 epoch;          // primary cluster epoch, must match local core_ctrl
+    uint32 node_count;     // expected primary cluster node count
+    uint64 expected_nodes; // bitmap of primary nodes that must demote
+    uint32 reserved;
+} rep_cluster_switch_req_t;
+
+typedef struct st_rep_cluster_switch_resp {
+    rep_state_t state;     // PROMOTE_APPROVE / REJECTED
+    uint32 epoch;          // (failover) new epoch after promote
+    uint64 demoted_nodes;  // bitmap of demoted primary nodes
+    uint32 reserved;
+} rep_cluster_switch_resp_t;
 
 typedef struct st_rep_buffer {
     aligned_buf_t read_buf;
