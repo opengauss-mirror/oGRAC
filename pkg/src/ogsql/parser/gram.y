@@ -384,7 +384,7 @@ typedef struct st_pl_bison_language_def pl_bison_language_def_t;
 %type <expr> expr_with_select expr_list_with_select expr_list_with_select_row implicit_row parenthesized_bare_expr
              parenthesized_oper_expr opt_escape expr_list_with_paren hierarchical_unary_expr
              func_expr_windowless opt_column_on_update
-%type <join_node> using_clause from_list table_ref joined_table from_clause
+%type <join_node> using_clause from_list comma_join_list table_ref joined_table from_clause
 %type <join_type> join_type
 %type <rs_column> json_column
 %type <json_func_att_id> format_json_attr json_on_null json_array_wrapper json_on_error json_on_empty json_on_empty_null_or_error
@@ -4099,7 +4099,15 @@ from_list:
                 {
                     $$ = $1;
                 }
-            | from_list ',' table_ref
+            | comma_join_list
+                {
+                    $$ = $1;
+                }
+        ;
+
+/* Require a comma so table groups do not overlap single-table or subquery parentheses. */
+comma_join_list:
+            from_list ',' table_ref
                 {
                     sql_join_node_t *join_node = NULL;
                     sql_stmt_t *stmt = og_yyget_extra(yyscanner)->core_yy_extra.stmt;
@@ -5074,6 +5082,10 @@ join_outer: OUTER_P
 
 joined_table:
             '(' joined_table ')'
+                {
+                    $$ = $2;
+                }
+            | '(' comma_join_list ')'
                 {
                     $$ = $2;
                 }

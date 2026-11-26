@@ -1402,6 +1402,25 @@ select * from t_first,t_second where a=c(+) order by a;
 select * from t_first,t_second where a=t_second.c(+) order by a;
 select * from t_first,t_second where a(+)=c(+); --error
 select * from t_first,t_second where t_second.*(+)=a; --error
+-- Parenthesized comma table groups reuse the existing join inputs.
+select count(*) as n from (t_first x, t_second y) join t_first z on y.c=z.a;
+select count(*) as n from t_first z join (t_first x, t_second y) on y.c=z.a;
+select count(*) as n from (t_first x, t_second y, t_first z);
+select count(*) as n from ((t_first x, t_second y), t_first z);
+select count(*) as n from (((t_first x, t_second y)));
+select count(*) as n from (t_first x join t_second y on x.a=y.c, t_first z);
+select count(*) as n from (t_first x, t_second y join t_first z on y.c=z.a);
+-- Correlated EXISTS keeps outer references visible through the grouped join.
+select count(*) as n from t_first t1, t_first t2, t_first t3 where exists(select * from (t_first t11, t_second t12) join t_first t13 on t12.c=t13.a where t11.a between t1.a and t2.a+t3.a);
+select count(*) as n from t_first t1, t_first t2, t_first t3 where exists(select * from (t_first t11 cross join t_second t12) join t_first t13 on t12.c=t13.a where t11.a between t1.a and t2.a+t3.a);
+-- ON can reference both group members; preserve outer-join grouping.
+select count(*) as n, count(z.c) as matched from (t_first x, t_first y) left join t_second z on x.a+y.a=z.c;
+select count(*) as n, count(z.c) as matched from (t_first x cross join t_first y) left join t_second z on x.a+y.a=z.c;
+select count(*) as n, count(x.a) as matched from (t_first x, t_first y) right join t_first z on x.a+y.a=z.a;
+-- Reject malformed groups and whole-group aliases.
+select count(*) from (); --error
+select count(*) from (t_first x,); --error
+select count(*) from (t_first x, t_second y) group_alias; --error
 drop table t_first;
 drop table t_second;
 --quote

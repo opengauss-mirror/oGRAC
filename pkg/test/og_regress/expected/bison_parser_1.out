@@ -4518,6 +4518,115 @@ OG-00601, [1:43]Sql syntax error: invalid usage outer join symbol
 SQL> select * from t_first,t_second where t_second.*(+)=a; --error
 
 OG-00601, [1:38]Sql syntax error: unexpected '*'
+SQL> -- Parenthesized comma table groups reuse the existing join inputs.
+SQL> select count(*) as n from (t_first x, t_second y) join t_first z on y.c=z.a;
+
+N                   
+--------------------
+3                   
+
+1 rows fetched.
+
+SQL> select count(*) as n from t_first z join (t_first x, t_second y) on y.c=z.a;
+
+N                   
+--------------------
+3                   
+
+1 rows fetched.
+
+SQL> select count(*) as n from (t_first x, t_second y, t_first z);
+
+N                   
+--------------------
+9                   
+
+1 rows fetched.
+
+SQL> select count(*) as n from ((t_first x, t_second y), t_first z);
+
+N                   
+--------------------
+9                   
+
+1 rows fetched.
+
+SQL> select count(*) as n from (((t_first x, t_second y)));
+
+N                   
+--------------------
+3                   
+
+1 rows fetched.
+
+SQL> select count(*) as n from (t_first x join t_second y on x.a=y.c, t_first z);
+
+N                   
+--------------------
+3                   
+
+1 rows fetched.
+
+SQL> select count(*) as n from (t_first x, t_second y join t_first z on y.c=z.a);
+
+N                   
+--------------------
+3                   
+
+1 rows fetched.
+
+SQL> -- Correlated EXISTS keeps outer references visible through the grouped join.
+SQL> select count(*) as n from t_first t1, t_first t2, t_first t3 where exists(select * from (t_first t11, t_second t12) join t_first t13 on t12.c=t13.a where t11.a between t1.a and t2.a+t3.a);
+
+N                   
+--------------------
+26                  
+
+1 rows fetched.
+
+SQL> select count(*) as n from t_first t1, t_first t2, t_first t3 where exists(select * from (t_first t11 cross join t_second t12) join t_first t13 on t12.c=t13.a where t11.a between t1.a and t2.a+t3.a);
+
+N                   
+--------------------
+26                  
+
+1 rows fetched.
+
+SQL> -- ON can reference both group members; preserve outer-join grouping.
+SQL> select count(*) as n, count(z.c) as matched from (t_first x, t_first y) left join t_second z on x.a+y.a=z.c;
+
+N                    MATCHED             
+-------------------- --------------------
+9                    2                   
+
+1 rows fetched.
+
+SQL> select count(*) as n, count(z.c) as matched from (t_first x cross join t_first y) left join t_second z on x.a+y.a=z.c;
+
+N                    MATCHED             
+-------------------- --------------------
+9                    2                   
+
+1 rows fetched.
+
+SQL> select count(*) as n, count(x.a) as matched from (t_first x, t_first y) right join t_first z on x.a+y.a=z.a;
+
+N                    MATCHED             
+-------------------- --------------------
+4                    3                   
+
+1 rows fetched.
+
+SQL> -- Reject malformed groups and whole-group aliases.
+SQL> select count(*) from (); --error
+
+OG-00601, [1:23]Sql syntax error: unexpected ')'
+SQL> select count(*) from (t_first x,); --error
+
+OG-00601, [1:33]Sql syntax error: unexpected ')'
+SQL> select count(*) from (t_first x, t_second y) group_alias; --error
+
+OG-00601, [1:46]Sql syntax error: unexpected identifier
 SQL> drop table t_first;
 
 Succeed.
