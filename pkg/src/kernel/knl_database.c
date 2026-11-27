@@ -49,6 +49,23 @@ bool8 g_local_set_disaster_cluster_role = OG_FALSE;
 bool32 g_get_role_from_dbs = OG_FALSE;
 bool8 g_standby_will_promote = OG_FALSE;
 
+bool32 db_dual_cluster_enabled(knl_session_t *session)
+{
+    return DB_ATTR_CLUSTER(session) && session->kernel->attr.enable_dual_cluster;
+}
+
+bool32 db_dual_cluster_primary(knl_session_t *session)
+{
+    return db_dual_cluster_enabled(session) && DB_IS_PRIMARY(&session->kernel->db);
+}
+
+bool32 db_dual_cluster_standby(knl_session_t *session)
+{
+    return db_dual_cluster_enabled(session) && DB_IS_PHYSICAL_STANDBY(&session->kernel->db);
+}
+
+
+
 /*
  * Initialize member of database
  * @param    kernel handle of the open kernel
@@ -1802,7 +1819,7 @@ status_t db_build_baseline(knl_session_t *session, knl_build_def_t *def)
 
 static void db_wait_repl_ready(knl_session_t *session)
 {
-    if (DB_IS_CLUSTER(session)) {
+    if (db_dual_cluster_enabled(session)) {
         // cluster standby build is decoupled from redo transport (build first, configure
         // LOG_ARCHIVE_DEST_n later), so do not wait for the log receiver to become prepared
         OG_LOG_RUN_INF("[DB] cluster standby build finished, skip waiting log receiver prepared");

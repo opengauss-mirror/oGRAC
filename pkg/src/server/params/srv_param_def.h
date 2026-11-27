@@ -475,6 +475,7 @@ typedef enum en_param_global {
     PARAM_ENABLE_PARA_LOG_FLUSH,
     PARAM_ENABLE_PARA_LOG_DFX,
     PARAM_PEER_FLUSH_LSN_TIMEOUT_MS,
+    PARAM_ENABLE_DUAL_CLUSTER,
     PARAM_CEIL,
 } param_global_t;
 

@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+#include "knl_database.h"
 #include "knl_replication_module.h"
 #include "repl_log_recv.h"
 #include "cm_file.h"
@@ -823,8 +824,12 @@ static bool32 lrcv_rcv_msg_is_valid(lrcv_context_t *lrcv)
         }
 
         case REP_QUERY_STATUS_REQ: {
+            if (lrcv->header.size < sizeof(rep_msg_header_t) + REP_QUERY_STATUS_REQ_V1_SHORT_SIZE) {
+                return OG_FALSE;
+            }
             rep_query_status_req_t *query_req = (rep_query_status_req_t *)extend_buf;
-            if (log_point_is_invalid(&query_req->curr_point)) {
+            if (rep_query_status_req_wire_size(query_req->version, query_req->log_num, lrcv->header.size) == 0 ||
+                log_point_is_invalid(&query_req->curr_point)) {
                 return OG_FALSE;
             }
             break;
@@ -2415,7 +2420,13 @@ static bool32 lrcv_log_ctrl_check(lrcv_context_t *lrcv, rep_query_status_req_t *
         return OG_FALSE;
     }
 
-    ctrl_pri = (log_file_ctrl_t *)((char *)req + sizeof(rep_query_status_req_t));
+    uint32 request_size = rep_query_status_req_wire_size(req->version, req->log_num, lrcv->header.size);
+    if (request_size == 0) {
+        OG_LOG_RUN_ERR("[Log Receiver] invalid query status layout: version %u size %u logs %u",
+            (uint32)req->version, lrcv->header.size, req->log_num);
+        return OG_FALSE;
+    }
+    ctrl_pri = (log_file_ctrl_t *)((char *)req + request_size);
     for (uint32 i = 0; i < hwm; i++) {
         logfile = &file_set->items[i];
 
@@ -3053,9 +3064,15 @@ static status_t lrcv_process_query_status(lrcv_context_t **lrcv_ptr, rep_query_s
     status_t status;
     bool32 is_building_cascaded = OG_FALSE;
 
-    lrcv = lrcv_bind_stream(lrcv, req);
-    if (lrcv == NULL) {
-        return OG_ERROR;
+    if (db_dual_cluster_enabled(lrcv->session)) {
+        lrcv = lrcv_bind_stream(lrcv, req);
+        if (lrcv == NULL) {
+            return OG_ERROR;
+        }
+    } else {
+        lrcv->stream_bound = OG_FALSE;
+        lrcv->src_node_id = lrcv->session->kernel->id;
+        lrcv->stream_curr_point = lrcv->session->kernel->redo_ctx.curr_point;
     }
     *lrcv_ptr = lrcv;
 

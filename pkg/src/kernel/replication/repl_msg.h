@@ -116,6 +116,21 @@ typedef struct st_rep_batch_resp {
     log_point_t contflush_point;
 } rep_batch_resp_t;
 
+/* Original V0/V1 request: do not add fields or change its reserved area. */
+typedef struct st_rep_query_status_req_v1 {
+    reset_log_t rst_log;
+    log_point_t curr_point;
+    uint32 log_num;
+    bool32 is_standby;  // If true, peer will be set cascaded standby
+    uint16 repl_port;   // sent to peer and be kept, used for lftc & build to connect
+    uint16 version;
+    uint32 dbid;
+    bool32 notify_repair; // If true, peer will be set need repair
+    uint32 reserved_field;
+    knl_scn_t reset_log_scn;
+    uint64 reserved[6];
+} rep_query_status_req_v1_t;
+
 typedef struct st_rep_query_status_req {
     reset_log_t rst_log;
     log_point_t curr_point;
@@ -131,6 +146,26 @@ typedef struct st_rep_query_status_req {
     uint32 src_node_id;   // source node id (redo stream identity)
     uint64 reserved[5];
 } rep_query_status_req_t;
+
+/* Freeze the pre-cluster V1 layout independently of cluster extensions.
+ * Upgrade short-layout receivers first: their unchanged V1 version cannot
+ * tell a sender which of the two historical layouts they require. */
+#define REP_QUERY_STATUS_REQ_V1_SIZE ((uint32)sizeof(rep_query_status_req_v1_t))
+/* The first multi-source release accidentally removed one reserved word. */
+#define REP_QUERY_STATUS_REQ_V1_SHORT_SIZE (REP_QUERY_STATUS_REQ_V1_SIZE - (uint32)sizeof(uint64))
+
+/* Return the request prefix size only for an exact, bounded wire layout.
+ * V0/V1 have two deployed sizes; cluster requests retain their current size. */
+static inline uint32 rep_query_status_req_wire_size(uint16 version, uint32 log_num, uint32 message_size)
+{
+    if (log_num > OG_MAX_LOG_FILES || version > ST_VERSION_2) {
+        return 0;
+    }
+    uint64 size = (uint64)message_size - sizeof(rep_msg_header_t) - (uint64)log_num * sizeof(log_file_ctrl_t);
+    return ((version < ST_VERSION_2 && (size == REP_QUERY_STATUS_REQ_V1_SIZE ||
+        size == REP_QUERY_STATUS_REQ_V1_SHORT_SIZE)) ||
+        (version >= ST_VERSION_2 && size == sizeof(rep_query_status_req_t))) ? (uint32)size : 0;
+}
 
 typedef struct st_rep_query_status_resp {
     log_point_t flush_point;
