@@ -570,7 +570,7 @@ void bak_build_end(knl_session_t *session)
     // a subsequent build retry re-allocates it
     arch_context_t *arch_ctx = &session->kernel->arch_ctx;
     arch_proc_context_t *proc_ctx = &arch_ctx->arch_proc[ARCH_DEFAULT_DEST - 1];
-    if (proc_ctx->arch_rw_buf.aligned_buf.aligned_buf != NULL) {
+    if (db_dual_cluster_enabled(session) && proc_ctx->arch_rw_buf.aligned_buf.aligned_buf != NULL) {
         arch_release_proc_resource(proc_ctx);
     }
 
@@ -657,7 +657,7 @@ static status_t bak_build_start(knl_session_t *session)
     // primary-only, so allocate it here for the standby build
     arch_context_t *arch_ctx = &session->kernel->arch_ctx;
     arch_proc_context_t *proc_ctx = &arch_ctx->arch_proc[ARCH_DEFAULT_DEST - 1];
-    if (proc_ctx->arch_rw_buf.aligned_buf.aligned_buf == NULL) {
+    if (db_dual_cluster_enabled(session) && proc_ctx->arch_rw_buf.aligned_buf.aligned_buf == NULL) {
         proc_ctx->data_type = arch_ctx->data_type;
         if (arch_init_proc_resource(session, proc_ctx) != OG_SUCCESS) {
             return OG_ERROR;

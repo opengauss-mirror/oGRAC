@@ -3110,6 +3110,9 @@ static void dtc_rcy_get_page_id(bool32 recover_flag, page_id_t *page_id)
  */
 static inline bool32 dtc_rcy_continuous_apply(knl_session_t *session)
 {
+    if (session == NULL || !db_dual_cluster_enabled(session)) {
+        return OG_FALSE;
+    }
     return (session != NULL && DB_STATUS(session) == DB_STATUS_OPEN &&
             !DB_IS_PRIMARY(&session->kernel->db) && DB_IS_CLUSTER(session));
 }
@@ -3123,6 +3126,9 @@ static inline bool32 dtc_rcy_continuous_apply(knl_session_t *session)
  */
 static inline bool32 dtc_rcy_standby_replay(knl_session_t *session)
 {
+    if (session == NULL || !db_dual_cluster_enabled(session)) {
+        return OG_FALSE;
+    }
     return (session != NULL && !DB_IS_PRIMARY(&session->kernel->db) && DB_IS_CLUSTER(session));
 }
 
@@ -5031,20 +5037,8 @@ static status_t dtc_rcy_read_online_log(knl_session_t *session, uint32 file_id, 
     int64 offset = (int64)point->block_id * file->ctrl->block_size;
     int64 file_size = file->head.write_pos;
     if (file->ctrl->status == LOG_FILE_CURRENT) {
-        /*
-         * The receiver (RFS) updates head.write_pos synchronously after every
-         * batch it writes, so on a streaming standby the in-memory head is
-         * the accurate end of valid redo -- for continuous apply AND for
-         * startup recovery / restore of a freshly built standby.  Falling
-         * back to ctrl->size here reads the whole pre-allocated ring, most of
-         * which is uninitialized tail; the batch walker then stops at the
-         * first zeroed region (a 55 MB hole right after BUILD restore, when
-         * the receiver has only written the file head) and spins on
-         * "invalid batch" forever while the receiver waits for the database
-         * to open.  The stale-on-disk-head fallback below still covers an
-         * unclean stop where the on-disk head is ahead of the cached one.
-         */
-        file_size = file->head.write_pos;
+        // the write_pos of current log file is not accurate
+        file_size = file->ctrl->size;
     }
 
     /*

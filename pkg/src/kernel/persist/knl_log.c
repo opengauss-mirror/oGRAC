@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+#include "knl_database.h"
 #include "knl_persist_module.h"
 #include "knl_log.h"
 #include "cm_log.h"
@@ -1659,7 +1660,8 @@ static inline void log_assign_group_lsn(knl_session_t *session, log_context_t *o
 {
     /* Only a cluster sender can arm tracking. Test under buf->lock so first
      * activation also accounts for writers that were already in flight. */
-    if (SECUREC_UNLIKELY(DB_IS_CLUSTER(session) && cm_atomic32_get(&ogx->drain_tracking))) {
+    if (SECUREC_UNLIKELY(db_dual_cluster_enabled(session) && DB_IS_CLUSTER(session) &&
+        cm_atomic32_get(&ogx->drain_tracking))) {
         cm_spin_lock(&ogx->drain_lock, NULL);
         session->curr_lsn = (uint64)DB_INC_LSN(session);
         ogx->write_lsn = session->curr_lsn;

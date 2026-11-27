@@ -502,6 +502,7 @@ static status_t srv_get_ha_params(knl_attr_t *attr)
     }
     (void)cm_atomic_set(&attr->repl_pkg_size, (int64)pkg_size);
 
+    OG_RETURN_IFERR(srv_get_param_bool32("ENABLE_DUAL_CLUSTER", &attr->enable_dual_cluster));
     attr->repl_port = g_instance->lsnr.tcp_replica.port;
     OG_RETURN_IFERR(srv_get_param_bool32("REPL_AUTH", &attr->repl_auth));
     OG_RETURN_IFERR(srv_get_param_bool32("REPL_SCRAM_AUTH", &attr->repl_scram_auth));

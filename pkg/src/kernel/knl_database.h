@@ -414,6 +414,13 @@ int32_t db_switch_role(DbsRoleInfo role_info);
 void db_promote_cluster_role(thread_t *thread);
 int32_t set_disaster_cluster_role(DbsRoleInfo info);
 
+/* Deployment predicates do not require cluster_ready during startup.
+ * Role predicates are valid after the database role has been established.
+ * Cleanup of existing work must also consider the work's ownership state. */
+bool32 db_dual_cluster_enabled(knl_session_t *session);
+bool32 db_dual_cluster_primary(knl_session_t *session);
+bool32 db_dual_cluster_standby(knl_session_t *session);
+
 #define DB_CORE_CTRL(session) (&(session)->kernel->db.ctrl.core)
 
 #ifdef __cplusplus

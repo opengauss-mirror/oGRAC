@@ -140,6 +140,7 @@ typedef struct st_knl_attr {
     bool32 rcy_check_pcn;
     uint32 repl_wait_timeout;
     uint32 build_keep_alive_timeout;
+    bool32 enable_dual_cluster; // ENABLE_DUAL_CLUSTER, loaded at startup
     uint16 repl_port;
     // primary cluster master repl addr(host:port)
     char primary_repl_addr[OG_HOST_NAME_BUFFER_SIZE + OG_TCP_PORT_MAX_LENGTH + 1];

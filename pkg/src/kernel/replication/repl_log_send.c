@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
  */
 #include "knl_replication_module.h"
+#include "knl_database.h"
 #include "repl_log_send.h"
 #include "cs_protocol.h"
 #include "knl_context.h"
@@ -1675,7 +1676,7 @@ static status_t lsnd_query_standby_status(lsnd_t *lsnd)
                                         log_ctx->files[log_ctx->curr_file].ctrl->block_size);
     req->is_standby = DB_IS_PHYSICAL_STANDBY(&lsnd->session->kernel->db);
     req->repl_port = lsnd->session->kernel->attr.repl_port;
-    bool32 cluster_repl = DB_ATTR_CLUSTER(lsnd->session);
+    bool32 cluster_repl = db_dual_cluster_enabled(lsnd->session);
     req->version = cluster_repl ?
         ST_VERSION_2 : ST_VERSION_1;
     req->dbid = lsnd->session->kernel->db.ctrl.core.dbid;
@@ -1716,7 +1717,8 @@ static status_t lsnd_query_standby_status(lsnd_t *lsnd)
     }
 
     req->log_num = log_ctx->logfile_hwm;
-    uint32 offset = sizeof(rep_msg_header_t) + sizeof(rep_query_status_req_t);
+    uint32 offset = sizeof(rep_msg_header_t) +
+        (cluster_repl ? (uint32)sizeof(rep_query_status_req_t) : REP_QUERY_STATUS_REQ_V1_SIZE);
     for (uint32 i = 0; i < log_ctx->logfile_hwm; i++) {
         logfile = &log_ctx->files[i];
         err = memcpy_sp(buf + offset, (uint32)lsnd->send_buf.read_buf.buf_size - offset, (char *)logfile->ctrl,
@@ -1744,6 +1746,9 @@ static status_t lsnd_query_standby_status(lsnd_t *lsnd)
  * Writers release their buffer lock before ever acquiring flush_lock. */
 static void lsnd_enable_drain_tracking(knl_session_t *session)
 {
+    if (!db_dual_cluster_enabled(session)) {
+        return;
+    }
     log_context_t *redo = &session->kernel->redo_ctx;
     if (cm_atomic32_get(&redo->drain_tracking) || ENABLE_PARA_LOG_FLUSH(session)) {
         return;
@@ -1789,7 +1794,7 @@ static status_t lsnd_send_heart_beat(lsnd_t *lsnd)
     }
 
     knl_instance_t *knl = lsnd->session->kernel;
-    if (!DB_IS_CLUSTER(lsnd->session)) {
+    if (!db_dual_cluster_enabled(lsnd->session) || !DB_IS_CLUSTER(lsnd->session)) {
         /* Preserve the original heartbeat outside dual-cluster replication. */
         rep_msg_header.size = sizeof(rep_msg_header_t);
         rep_msg_header.type = REP_HEART_BEAT_REQ;
