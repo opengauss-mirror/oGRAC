@@ -1134,6 +1134,14 @@ static status_t shmem_scn_ensure_local_bound(void)
 
 status_t shmem_scn_rebind_if_needed(void)
 {
+    /*
+     * Hot-path fast skip: after init/bind, global_scn_slot stays published until
+     * invalidate/cleanup (same readiness bit as shmem_scn_ready()). Avoid
+     * enable/attr checks and full is_local_bound() on every txn-hot fetch.
+     */
+    if (SECUREC_LIKELY(shmem_scn_mgr()->global_scn_slot != NULL)) {
+        return OG_SUCCESS;
+    }
     return shmem_scn_ensure_local_bound();
 }
 

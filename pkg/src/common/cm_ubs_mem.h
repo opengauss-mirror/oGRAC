@@ -53,6 +53,9 @@ SHMEM_API int ubsmem_destroy_region(const char *region_name);
 SHMEM_API int ubsmem_shmem_allocate(
     const char *region_name, const char *name, size_t size, mode_t mode, uint64_t flags);
 
+SHMEM_API int ubsmem_shmem_allocate_with_provider(
+    const ubs_mem_provider_t *provider, const char *name, size_t size, mode_t mode, uint64_t flags);
+
 SHMEM_API int ubsmem_shmem_deallocate(const char *name);
 
 SHMEM_API int ubsmem_shmem_map(void *addr, size_t length, int prot, int flags, const char *name, off_t offset,

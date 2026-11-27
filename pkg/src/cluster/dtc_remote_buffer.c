@@ -28,6 +28,7 @@
 #include "cm_malloc.h"
 #include "cm_date.h"
 #include "cm_thread.h"
+#include "cm_system.h"
 #include "cs_ub.h"
 #include "srv_sga.h"
 #include "cm_ubs_mem.h"
@@ -36,6 +37,9 @@
 #include "pcr_heap.h"
 
 #include "dtc_remote_lock.h"
+
+/* Mirror of /usr/local/ubs_mem/include/ubs_mem.h. */
+CM_STATIC_ASSERT(sizeof(ubs_mem_provider_t) == 76);
 
 static ub_rw_lock_t *g_ub_lock = NULL;
 static ub_lock_config_t g_ub_lock_config = { 0 };
@@ -212,16 +216,17 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
     g_mes.profile.inst_count = 2;
 
     /*
-     * Region may already exist (ub_create_shm_region warns and reuses).
-     * Data buffer must be newly created; already-exist → fail (stale content / LSN).
+     * Provider pool does not live in a UBSM region; skip ub_create_shm_region.
+     * Kept for reference / possible lifecycle rollback:
+     *
+     * int ret = ub_create_shm_region(node_id, g_mes.profile.inst_count,
+     *     g_instance->kernel.attr.ubs_cluster_hosts);
+     * if (ret != OG_SUCCESS) {
+     *     OG_LOG_RUN_ERR("[DRC] drc create sgm region fail, return error:%d", ret);
+     *     return ret;
+     * }
      */
-    int ret = ub_create_shm_region(node_id, g_mes.profile.inst_count,
-        g_instance->kernel.attr.ubs_cluster_hosts);
-    if (ret != OG_SUCCESS) {
-        OG_LOG_RUN_ERR("[DRC] drc create sgm region fail, return error:%d", ret);
-        return ret;
-    }
-
+    int ret;
     char data_buf_name[MAX_SHM_NAME_LENGTH] = { 0 };
     struct passwd *pwd;
     pwd = getpwuid(getuid());
@@ -231,31 +236,67 @@ static status_t drc_alloc_mmap_remote_buffer_pool(remote_sga_t *remote_sga)
         return ret;
     }
 
-    char region_name[MAX_REGION_NAME_DESC_LENGTH] = { 0 };
-    ret = sprintf_s(region_name, sizeof(region_name), "shm_pool_%d", node_id);
-    if (ret < EOK) {
-        OG_LOG_RUN_ERR("[DRC] sprintf remote data buf region name fail,return error:%d", ret);
-        return ret;
+    /*
+     * The migration pool must be created through the UBSM provider API; a
+     * region-only pool is rejected by ubs_mem_shm_migrate with 1013.
+     * Resolved via cm_ub_sdk.c dlopen wrapper (same path as ubsmem_shmem_allocate).
+     */
+    ubs_mem_provider_t provider;
+    const char *host = cm_sys_host_name();
+    if (host == NULL || host[0] == '\0') {
+        OG_LOG_RUN_ERR("[DRC][UBSM-PROVIDER] get local host name failed, cannot create provider pool");
+        return OG_ERROR;
     }
+    (void)memset(&provider, 0, sizeof(provider));
+    size_t host_len = strlen(host);
+    if (host_len >= sizeof(provider.host_name)) {
+        host_len = sizeof(provider.host_name) - 1;
+    }
+    (void)memcpy(provider.host_name, host, host_len);
+    provider.socket_id = 1;
+    provider.numa_id = UINT32_MAX;
+    provider.port_id = UINT32_MAX;
 
     remote_sga->data_buf_fresh = OG_FALSE;
-    ret = ubsmem_shmem_allocate(region_name, data_buf_name, remote_sga->remote_total_pool_size, 0600,
-                                UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
+    ret = ubsmem_shmem_allocate_with_provider(&provider, data_buf_name,
+        remote_sga->remote_total_pool_size, 0600,
+        UBSM_FLAG_WR_DELAY_COMP | UBSM_FLAG_ONLY_IMPORT_NONCACHE);
     if (ret == UBSM_ERR_ALREADY_EXIST) {
         remote_sga->data_buf_fresh = OG_FALSE;
-        OG_LOG_RUN_ERR("[DRC]data buffer %s already exist (ret=%d), refuse reuse; "
-            "destroy GBP shm (region+data) then restart. node_id=%u region=%s size=%llu",
-            data_buf_name, ret, node_id, region_name, remote_sga->remote_total_pool_size);
+        OG_LOG_RUN_ERR("[DRC][UBSM-PROVIDER] data buffer %s already exist (ret=%d), refuse reuse; "
+            "destroy GBP shm then restart. node_id=%u host=%s size=%llu",
+            data_buf_name, ret, node_id, provider.host_name, remote_sga->remote_total_pool_size);
         return OG_ERROR;
     } else if (ret != UBSM_OK) {
-        OG_LOG_RUN_ERR("[DRC]data buffer %s allocate fail, ret: %d, node_id=%u, region=%s, size=%llu",
-            data_buf_name, ret, node_id, region_name, remote_sga->remote_total_pool_size);
+        OG_LOG_RUN_ERR("[DRC][UBSM-PROVIDER] data buffer %s allocate fail, ret: %d, node_id=%u, host=%s, size=%llu",
+            data_buf_name, ret, node_id, provider.host_name, remote_sga->remote_total_pool_size);
         return ret;
     }
 
     remote_sga->data_buf_fresh = OG_TRUE;
-    OG_LOG_RUN_INF("[DRC]data buffer %s newly allocated size=%llu, will zero whole pool",
-        data_buf_name, remote_sga->remote_total_pool_size);
+    OG_LOG_RUN_INF("[DRC][UBSM-PROVIDER] data buffer %s allocated with provider, node_id=%u, host=%s, size=%llu",
+        data_buf_name, node_id, provider.host_name, remote_sga->remote_total_pool_size);
+
+    /*
+     * The rest of the mapping path resolves the pool again via
+     * ubsmem_shmem_list_lookup. Verify visibility here so a provider pool that
+     * is not listed fails with an explicit message instead of a later, vague
+     * map/attach error.
+     */
+    {
+        ubsmem_shmem_desc_t objects[2] = { 0 };
+        uint32 count = 2;
+        char verify_name[MAX_REGION_NAME_DESC_LENGTH] = { 0 };
+        int lookup_ret = ubsmem_shmem_list_lookup(data_buf_name, objects, &count);
+        if (lookup_ret == UBSM_OK && count > 0) {
+            (void)strcpy_s(verify_name, sizeof(verify_name), objects[0].name);
+        }
+        if (lookup_ret != UBSM_OK || count == 0 || strcmp(verify_name, data_buf_name) != 0) {
+            OG_LOG_RUN_ERR("[DRC][UBSM-PROVIDER] pool %s allocated but not resolvable by "
+                           "ubsmem_shmem_list_lookup (resolved=%s); local mapping and peer discovery will fail",
+                           data_buf_name, verify_name);
+        }
+    }
 
     ret = dtc_mmap_remote_data_buf(remote_sga, node_id);
     if (ret != UBSM_OK) {

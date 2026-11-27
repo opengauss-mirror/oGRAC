@@ -45,6 +45,9 @@ extern "C" {
 #define MAX_NUMA_RESV_LEN 16
 
 #define MAX_HOST_NAME_DESC_LENGTH 64
+#ifndef UBSM_MAX_HOST_NAME
+#define UBSM_MAX_HOST_NAME 64
+#endif
 #define MAX_SHM_NAME_LENGTH 48
 #define MAX_REGION_NAME_DESC_LENGTH 48
 #define MAX_REGION_NODE_NUM 16
@@ -157,6 +160,19 @@ typedef struct {
     char name[MAX_SHM_NAME_LENGTH + 1];
     size_t size;
 } ubsmem_shmem_desc_t;
+
+/*
+ * Mirror of /usr/local/ubs_mem/include/ubs_mem.h.
+ * sizeof(ubs_mem_provider_t) == 76: host_name[64] + 3 * uint32_t.
+ * The provider-created pool is required by UBSE shared-memory migration;
+ * a region-only pool is rejected with UBS_ENGINE_ERR_ALLOCATE (1013).
+ */
+typedef struct {
+    char host_name[UBSM_MAX_HOST_NAME];
+    uint32_t socket_id;
+    uint32_t numa_id;
+    uint32_t port_id;
+} ubs_mem_provider_t;
 
 typedef struct {
     char name[MAX_SHM_NAME_LENGTH + 1];
